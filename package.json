@@ -1,0 +1,15 @@
+{
+  "name": "attic-bildarkiv",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check public/app.js && node --check public/zip-import.js && node --check public/zip-ui.js && node --check public/r2-ui.js && node --check public/theme-ui.js && node --check public/theme-library.js",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.157.0"
+  }
+}

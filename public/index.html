@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#10131d" />
+    <meta
+      name="description"
+      content="Attic – ett privat bildarkiv för applikationsikoner och teman."
+    />
+    <title>Attic · Bildarkivet</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+    <script defer src="/pako.min.js"></script>
+    <script type="module" src="/zip-ui.js"></script>
+    <script type="module" src="/r2-ui.js"></script>
+    <link rel="stylesheet" href="/theme.css" />
+    <script type="module" src="/theme-ui.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar" aria-label="Huvudmeny">
+        <a class="brand" href="#bilder" aria-label="Attic, till bilderna">
+          <span class="brand-mark" aria-hidden="true"
+            ><svg viewBox="0 0 48 48" fill="none">
+              <path
+                d="M11 14 24 7l13 7v20l-13 7-13-7V14Z"
+                stroke="currentColor"
+                stroke-width="2.4"
+              />
+              <path d="m11 14 13 8 13-8M24 22v19" stroke="currentColor" stroke-width="2.2" />
+              <path d="m19 16 10-5" stroke="currentColor" stroke-width="2" /></svg
+          ></span>
+          <span class="brand-name">ATTIC<span class="brand-caption">BILDARKIVET</span></span>
+        </a>
+        <div class="sidebar-section-label">ARBETSYTA</div>
+        <nav class="nav-group" aria-label="Vyer">
+          <button class="nav-item active" data-view="bilder" type="button">
+            <svg viewBox="0 0 24 24">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" /></svg
+            ><span>Bilder</span><span class="nav-count" id="nav-all-count">0</span>
+          </button>
+          <button class="nav-item" data-view="teman" type="button">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 1.8-4.2 1.9 1.9 0 0 1 1.5-3.2h1.4A3.8 3.8 0 0 0 22 9.8 8.6 8.6 0 0 0 12 3Z"
+              />
+              <circle cx="7.5" cy="11" r="1" />
+              <circle cx="10" cy="6.8" r="1" />
+              <circle cx="16" cy="7.5" r="1" /></svg
+            ><span>Teman</span><span class="nav-count" id="nav-theme-count">0</span>
+          </button>
+        </nav>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section-label">SNABBÅTGÄRDER</div>
+        <button class="nav-item" type="button" id="sidebar-upload">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg
+          ><span>Ladda upp bild</span><span class="nav-shortcut">+</span>
+        </button>
+        <button class="nav-item" type="button" data-open-zip>
+          <svg viewBox="0 0 24 24">
+            <rect x="4" y="3" width="16" height="18" rx="2" />
+            <path d="M12 4v9m-3 0h6m-3 0v5" /></svg
+          ><span>Ladda upp ZIP</span>
+        </button>
+        <button class="nav-item" type="button" data-open-r2>
+          <span aria-hidden="true">▤</span><span>R2-utforskare</span>
+        </button>
+        <div class="sidebar-bottom">
+          <a
+            class="nav-item"
+            href="/cdn-cgi/access/logout"
+            id="logout-link"
+            title="Logga ut från Cloudflare Access"
+            ><span aria-hidden="true">↪</span><span>Logga ut</span></a
+          >
+
+          <div class="sidebar-account">
+            <div class="account-avatar">D</div>
+            <div><strong>Privat arbetsyta</strong><span>Skyddad med Cloudflare Access</span></div>
+            <span class="online-indicator" aria-label="Skyddad"></span>
+          </div>
+          <div class="sidebar-version">ATTIC / V1.3</div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <button
+            id="mobile-menu"
+            type="button"
+            class="icon-button mobile-menu"
+            aria-label="Öppna meny"
+          >
+            <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          </button>
+          <div class="topbar-actions">
+            <span class="protected-label"
+              ><svg viewBox="0 0 24 24">
+                <rect x="5" y="10" width="14" height="11" rx="2" />
+                <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+              </svg>
+              Privat portal</span
+            ><span class="topbar-separator"></span
+            ><button type="button" data-open-r2 class="secondary-button r2-top-button">
+              R2-bilder</button
+            ><button
+              type="button"
+              id="refresh-top"
+              class="icon-button"
+              aria-label="Uppdatera bilder"
+              title="Uppdatera"
+            >
+              <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.7 6M20 4v7h-7" /></svg>
+            </button>
+          </div>
+        </header>
+        <div class="content">
+          <section class="page-heading" aria-label="Introduktion">
+            <div class="eyebrow"><span class="eyebrow-dot"></span> DITT DIGITALA BILDARKIV</div>
+            <div class="heading-row">
+              <div>
+                <h1 id="page-title">Dina bilder. <span>Allt på sin plats.</span></h1>
+                <p id="page-description">
+                  En lugn plats för applikationsikoner, varianter och teman. Samlat, sorterat och
+                  redo att användas.
+                </p>
+              </div>
+              <div class="heading-actions">
+                <button class="primary-button desktop-upload" id="upload-main" type="button">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>Ladda upp bild</button
+                ><button class="secondary-button zip-heading-button" type="button" data-open-zip>
+                  Ladda upp ZIP
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="d-theme" id="d-theme" hidden>
+            <h2>Applicera tema i App Launcher</h2>
+            <p>Välj tema och upplösning, granska appikoner och applicera med ett klick.</p>
+            <div class="d-controls">
+              <label
+                >Tema<select id="d-name">
+                  <option value="">Välj tema…</option>
+                </select></label
+              ><label
+                >Upplösning<select id="d-size">
+                  <option value="512x512">512 × 512</option>
+                  <option value="1254x1254">1254 × 1254</option>
+                </select></label
+              ><button type="button" class="secondary-button" id="d-preview">Förhandsgranska</button
+              ><button type="button" class="primary-button" id="d-apply" disabled>
+                Applicera tema
+              </button>
+            </div>
+            <p id="d-status" role="status" aria-live="polite"></p>
+            <div class="d-table" id="d-table"></div>
+          </section>
+          <section class="theme-library" id="theme-library" hidden aria-labelledby="theme-heading">
+            <div class="section-header">
+              <div>
+                <div class="section-label">TEMAN</div>
+                <h2 id="theme-heading">Dina teman</h2>
+              </div>
+            </div>
+            <div id="theme-grid" class="theme-grid"></div>
+          </section>
+          <section class="stats-grid" aria-label="Statistik">
+            <div class="stat-card">
+              <div class="stat-top">
+                <span>Totalt antal bilder</span
+                ><span class="stat-icon stat-blue"
+                  ><svg viewBox="0 0 24 24">
+                    <rect x="3" y="3" width="18" height="18" rx="3" />
+                    <circle cx="8" cy="8" r="1.5" />
+                    <path d="m3 17 5-5 3.5 3.5L16 11l5 6" /></svg
+                ></span>
+              </div>
+              <div class="stat-number" id="stat-total">0</div>
+              <div class="stat-meta">I ditt bildarkiv</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-top">
+                <span>Applikationer</span
+                ><span class="stat-icon stat-purple"
+                  ><svg viewBox="0 0 24 24">
+                    <rect x="4" y="4" width="6" height="6" rx="1" />
+                    <rect x="14" y="4" width="6" height="6" rx="1" />
+                    <rect x="4" y="14" width="6" height="6" rx="1" />
+                    <rect x="14" y="14" width="6" height="6" rx="1" /></svg
+                ></span>
+              </div>
+              <div class="stat-number" id="stat-apps">0</div>
+              <div class="stat-meta">Med sparade bilder</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-top">
+                <span>Teman</span
+                ><span class="stat-icon stat-orange"
+                  ><svg viewBox="0 0 24 24">
+                    <path
+                      d="M12 3a9 9 0 1 0 0 18h1.5a2.5 2.5 0 0 0 1.8-4.2 1.9 1.9 0 0 1 1.5-3.2h1.4A3.8 3.8 0 0 0 22 9.8 8.6 8.6 0 0 0 12 3Z"
+                    /></svg
+                ></span>
+              </div>
+              <div class="stat-number" id="stat-themes">0</div>
+              <div class="stat-meta">Olika tema-mappar</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-top">
+                <span>Lagringsutrymme</span
+                ><span class="stat-icon stat-teal"
+                  ><svg viewBox="0 0 24 24">
+                    <ellipse cx="12" cy="5" rx="8" ry="3" />
+                    <path
+                      d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"
+                    /></svg
+                ></span>
+              </div>
+              <div class="stat-number" id="stat-storage">0 <span>MB</span></div>
+              <div class="stat-meta">Används av arkivet</div>
+            </div>
+          </section>
+
+          <section class="library-section" aria-labelledby="library-heading">
+            <div class="section-header">
+              <div>
+                <div class="section-label">BIBLIOTEK</div>
+                <h2 id="library-heading">Bildsamling</h2>
+              </div>
+              <div class="view-actions">
+                <button
+                  class="view-button selected"
+                  type="button"
+                  data-layout="grid"
+                  aria-label="Rutnätsvy"
+                  title="Rutnätsvy"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg></button
+                ><button
+                  class="view-button"
+                  type="button"
+                  data-layout="list"
+                  aria-label="Listvy"
+                  title="Listvy"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M9 5h12M9 12h12M9 19h12M3 5h2M3 12h2M3 19h2" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="filter-bar">
+              <label class="search-field"
+                ><svg viewBox="0 0 24 24">
+                  <circle cx="10.5" cy="10.5" r="6.5" />
+                  <path d="m16 16 5 5" /></svg
+                ><span class="sr-only">Sök bilder eller applikationer</span
+                ><input
+                  id="search"
+                  type="search"
+                  placeholder="Sök bilder eller applikationer…"
+                  autocomplete="off"
+                /><kbd>⌘ K</kbd></label
+              >
+              <div class="select-filters">
+                <label class="sr-only" for="app-filter">Applikation</label
+                ><select id="app-filter">
+                  <option value="all">Alla appar</option></select
+                ><label class="sr-only" for="theme-filter">Tema</label
+                ><select id="theme-filter">
+                  <option value="all">Alla teman</option>
+                  <option value="none">Utan tema</option></select
+                ><label class="sr-only" for="size-filter">Upplösning</label
+                ><select id="size-filter">
+                  <option value="all">Alla upplösningar</option>
+                  <option value="512x512">512 × 512</option>
+                  <option value="1254x1254">1254 × 1254</option></select
+                ><label class="sr-only" for="sort-filter">Sortera efter</label
+                ><select id="sort-filter">
+                  <option value="newest">Senaste först</option>
+                  <option value="name">Namn A–Ö</option>
+                  <option value="name-desc">Namn Ö–A</option>
+                  <option value="size-desc">Största filer</option>
+                  <option value="size-asc">Minsta filer</option>
+                </select>
+              </div>
+            </div>
+            <div class="results-label" id="results-label" aria-live="polite">0 bilder</div>
+            <div id="gallery" class="gallery grid-layout" aria-live="polite"></div>
+            <div id="empty-state" class="empty-state">
+              <div class="empty-illustration">
+                <div class="ill-back">
+                  <svg viewBox="0 0 48 48">
+                    <rect x="6" y="8" width="36" height="32" rx="6" />
+                    <circle cx="18" cy="20" r="4" />
+                    <path d="m8 36 11-11 8 7 6-7 9 10" />
+                  </svg>
+                </div>
+                <div class="ill-front">
+                  <svg viewBox="0 0 48 48">
+                    <rect x="6" y="8" width="36" height="32" rx="6" />
+                    <circle cx="18" cy="20" r="4" />
+                    <path d="m8 36 11-11 8 7 6-7 9 10" />
+                  </svg>
+                </div>
+                <span class="ill-spark">✦</span>
+              </div>
+              <h3 id="empty-title">Här börjar din samling</h3>
+              <p id="empty-description">
+                Arkivet väntar på sin första bild. Ladda upp en PNG, så ordnar Attic resten.
+              </p>
+              <button id="empty-upload" class="secondary-button" type="button">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>Lägg till första bilden</button
+              ><button type="button" data-open-zip class="secondary-button zip-empty-button">
+                Importera ZIP
+              </button>
+            </div>
+            <div id="error-banner" class="error-banner hidden" role="alert"></div>
+            <div class="library-footer">
+              <span><span class="footer-dot"></span> Lagring via Cloudflare R2</span
+              ><span>PNG · 512 × 512 / 1254 × 1254</span>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+    <div id="mobile-scrim" class="mobile-scrim" hidden></div>
+    <dialog id="upload-dialog" class="upload-dialog" aria-labelledby="upload-title">
+      <form id="upload-form" method="dialog" novalidate>
+        <div class="dialog-head">
+          <div>
+            <div class="section-label">NY BILD</div>
+            <h2 id="upload-title">Lägg till i arkivet</h2>
+            <p>Bilden får ett tydligt namn och rätt plats automatiskt.</p>
+          </div>
+          <button type="button" id="close-dialog" class="icon-button" aria-label="Stäng dialog">
+            <svg viewBox="0 0 24 24"><path d="M5 5 19 19M19 5 5 19" /></svg>
+          </button>
+        </div>
+        <div class="form-grid">
+          <label class="form-label"
+            >Kategori<select id="upload-category" name="category">
+              <option value="apps">Applikation</option>
+              <option value="themes">Tema</option>
+            </select></label
+          ><label class="form-label"
+            >Applikationens namn<input
+              id="upload-app"
+              name="app"
+              maxlength="64"
+              placeholder="t.ex. Plex"
+              required
+              autocomplete="off" /></label
+          ><label class="form-label hidden" id="theme-field"
+            >Temats namn<input
+              id="upload-theme"
+              name="theme"
+              maxlength="64"
+              placeholder="t.ex. Midnatt"
+              autocomplete="off"
+          /></label>
+        </div>
+        <input
+          id="upload-file"
+          type="file"
+          accept="image/png,.png"
+          class="sr-only"
+          aria-label="Välj PNG-bild"
+        />
+        <div
+          id="drop-zone"
+          class="drop-zone"
+          role="button"
+          tabindex="0"
+          aria-label="Välj eller släpp en PNG-bild"
+        >
+          <div id="drop-preview" class="drop-preview hidden">
+            <img id="preview-image" alt="Förhandsvisning av vald bild" />
+          </div>
+          <div id="drop-placeholder" class="drop-placeholder">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 15V4m0 0L7 9m5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg
+            ><strong>Släpp din PNG här</strong><span>eller klicka för att välja fil</span>
+          </div>
+          <div id="file-label" class="file-label">
+            PNG · 512 × 512 eller 1254 × 1254 · Max 12 MB
+          </div>
+        </div>
+        <div class="dialog-error hidden" id="upload-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button class="cancel-button" type="button" id="cancel-dialog">Avbryt</button
+          ><button class="primary-button" type="submit" id="submit-upload" disabled>
+            <svg viewBox="0 0 24 24">
+              <path d="M12 15V4m0 0L7 9m5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></svg
+            ><span id="submit-text">Spara bild</span>
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="move-dialog" class="upload-dialog" aria-labelledby="move-title">
+      <form id="move-form" method="dialog" novalidate>
+        <div class="dialog-head">
+          <div>
+            <div class="section-label">FLYTTA BILD</div>
+            <h2 id="move-title">Ändra app, tema eller variant</h2>
+            <p>Bilden sparas på sin nya plats och den gamla tas bort.</p>
+          </div>
+          <button type="button" id="move-close" class="icon-button" aria-label="Stäng">
+            <svg viewBox="0 0 24 24"><path d="M5 5 19 19M19 5 5 19" /></svg>
+          </button>
+        </div>
+        <div class="move-preview"><img id="move-image" alt="" /></div>
+        <div class="form-grid">
+          <label class="form-label"
+            >Applikation<input
+              id="move-app"
+              maxlength="48"
+              required
+              autocomplete="off"
+              list="known-apps"
+          /></label>
+          <label class="form-label"
+            >Tema (tomt = appikon)<input
+              id="move-theme"
+              maxlength="48"
+              autocomplete="off"
+              list="known-themes"
+          /></label>
+          <label class="form-label"
+            >Variant (valfri)<input id="move-variant" maxlength="48" autocomplete="off"
+          /></label>
+        </div>
+        <datalist id="known-apps"></datalist>
+        <datalist id="known-themes"></datalist>
+        <div class="dialog-error hidden" id="move-error" role="alert"></div>
+        <div class="dialog-actions">
+          <button class="cancel-button" type="button" id="move-cancel">Avbryt</button
+          ><button class="primary-button" type="submit" id="move-submit">Flytta</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="zip-dialog" class="upload-dialog zip-dialog" aria-labelledby="zip-title">
+      <div class="zip-dialog-content">
+        <div class="dialog-head">
+          <div>
+            <div class="section-label">MASSUPPLADDNING</div>
+            <h2 id="zip-title">Importera en ZIP-fil</h2>
+            <p>Attic identifierar app och tema automatiskt. Granska innan bilderna sparas.</p>
+          </div>
+          <button type="button" id="zip-close" class="icon-button" aria-label="Stäng ZIP-import">
+            <svg viewBox="0 0 24 24"><path d="M5 5 19 19M19 5 5 19" /></svg>
+          </button>
+        </div>
+        <label class="zip-file-label" for="zip-file"
+          ><strong>Välj ZIP-fil med dina nya PNG-bilder</strong
+          ><span>Högst 80 MB ZIP · 100 bilder · PNG 512×512 eller 1254×1254</span
+          ><input
+            type="file"
+            id="zip-file"
+            accept=".zip,application/zip,application/x-zip-compressed"
+        /></label>
+        <div class="zip-examples">
+          Exempel: <code>Monument/plex/monument-plex-512x512.png</code> samt
+          <code>Monument/whisparr/variants/maskerad/…</code>. Du kan även lägga enstaka filer som
+          <code>sonarr-512.png</code> direkt i ZIP-filen.
+        </div>
+        <div class="dialog-error hidden" id="zip-error" role="alert"></div>
+        <div id="zip-results" class="hidden">
+          <div id="zip-summary" class="zip-summary" role="status" aria-live="polite"></div>
+          <div id="zip-list" class="zip-list"></div>
+          <div id="zip-skipped" class="zip-skipped hidden"></div>
+        </div>
+        <div class="dialog-actions">
+          <button class="cancel-button" type="button" id="zip-cancel">Stäng</button
+          ><button type="button" class="primary-button" id="zip-upload" disabled>
+            Ladda upp valda bilder
+          </button>
+        </div>
+      </div>
+    </dialog>
+    <dialog id="r2-dialog" class="upload-dialog r2-dialog" aria-labelledby="r2-title">
+      <div class="r2-content">
+        <div class="dialog-head">
+          <div>
+            <div class="section-label">R2-LAGRING</div>
+            <h2 id="r2-title">Utforska bilder i R2</h2>
+            <p>
+              Granska äldre bilder och välj vilka som ska kopieras till Attic. Inga filer raderas
+              vid import.
+            </p>
+          </div>
+          <button type="button" id="r2-close" class="icon-button" aria-label="Stäng R2-utforskaren">
+            ✕
+          </button>
+        </div>
+        <div class="r2-filters">
+          <label class="form-label"
+            >Lagringsplats<select id="r2-source">
+              <option value="legacy">__LEGACY_BUCKET__ · äldre bilder</option>
+              <option value="attic">attic · importerade bilder</option>
+            </select></label
+          >
+          <label class="form-label"
+            >Mapp<select id="r2-folder">
+              <option value="">Alla mappar</option>
+            </select></label
+          >
+          <label class="form-label"
+            >Sök<input id="r2-search" type="search" placeholder="Sök filnamn eller mapp"
+          /></label>
+        </div>
+        <fieldset id="r2-scanner" class="r2-scanner" aria-label="Bildskanner och storleksfilter">
+          <legend>Automatisk bildskanner</legend>
+          <p id="r2-scan-status" class="r2-scan-status" role="status" aria-live="polite">
+            Skannar bildernas verkliga pixelmått när du öppnar R2.
+          </p>
+          <div class="r2-scanner-grid">
+            <div>
+              <div class="r2-scanner-label">Bildstorlekar (pixlar)</div>
+              <div
+                id="r2-dimension-options"
+                class="r2-checkbox-options"
+                role="group"
+                aria-label="Filtrera flera bildstorlekar"
+              ></div>
+            </div>
+            <div>
+              <div class="r2-scanner-label">Bildformat</div>
+              <div
+                id="r2-format-options"
+                class="r2-checkbox-options"
+                role="group"
+                aria-label="Filtrera flera bildformat"
+              ></div>
+            </div>
+          </div>
+          <div class="r2-sort-row">
+            <label for="r2-sort">Sortera efter</label
+            ><select id="r2-sort">
+              <option value="name">Filnamn A–Ö</option>
+              <option value="pixels-desc">Bildmått – störst först</option>
+              <option value="pixels-asc">Bildmått – minst först</option>
+              <option value="bytes-desc">Filstorlek – störst först</option>
+              <option value="bytes-asc">Filstorlek – minst först</option></select
+            ><button id="r2-reset-filters" type="button" class="cancel-button">
+              Visa alla format och storlekar
+            </button>
+          </div>
+        </fieldset>
+        <div class="r2-summary">
+          <span id="r2-count" role="status" aria-live="polite">Läser bilder…</span
+          ><button id="r2-select-all" type="button" class="secondary-button">Markera synliga</button
+          ><button id="r2-unselect" type="button" class="cancel-button">Avmarkera</button
+          ><button id="r2-reload" type="button" class="cancel-button">Uppdatera</button>
+        </div>
+        <div id="r2-error" class="dialog-error hidden" role="alert"></div>
+        <div id="r2-images" class="r2-images" aria-label="R2-bilder"></div>
+        <p id="r2-progress" class="r2-progress" aria-live="polite"></p>
+        <div class="r2-actions">
+          <label class="r2-check-chip"
+            ><input type="checkbox" id="r2-catalog" checked />Katalogisera automatiskt (app, tema,
+            upplösning)</label
+          ><button class="cancel-button" id="r2-delete" type="button" disabled>
+            Radera markerade</button
+          ><button class="primary-button" id="r2-import" type="button" disabled>
+            Importera till Attic
+          </button>
+        </div>
+        <p class="r2-notice">
+          Med automatisk katalogisering läses app, tema och upplösning ur sökväg, filnamn och
+          bildmått, och bilden sparas direkt bland dina teman. Numrerade filer som
+          <code>plex/plex-3.png</code> hamnar i temat <code>tema-3</code>. Bilder som inte går att
+          identifiera kopieras oförändrade till <code>imported/</code>. Från
+          <strong>attic</strong> flyttas katalogiserade bilder ut ur <code>imported/</code>;
+          originalen i __LEGACY_BUCKET__ ligger kvar.
+        </p>
+      </div>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
