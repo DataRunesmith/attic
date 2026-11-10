@@ -5,6 +5,7 @@
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnv } from "./env.mjs";
+import { validateBuildValues } from "../build-values.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const envPath = join(root, ".cloudflare.env");
@@ -19,27 +20,7 @@ if (workerName !== "attic")
   throw new Error("WORKER_NAME must match wrangler.jsonc (attic).");
 
 // Validate every build input before making any remote configuration change.
-const bucketPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/;
-for (const key of ["PUBLIC_HOST", "PUBLIC_ORIGIN", "GALLERY_BUCKET", "LEGACY_BUCKET", "SECRETS_STORE_ID"])
-  if (!values[key]) throw new Error("Missing " + key + " in .cloudflare.env.");
-for (const key of ["GALLERY_BUCKET", "LEGACY_BUCKET"])
-  if (!bucketPattern.test(values[key])) throw new Error(key + " is not a valid R2 bucket name.");
-if (values.GALLERY_BUCKET === values.LEGACY_BUCKET)
-  throw new Error("GALLERY_BUCKET and LEGACY_BUCKET must be different.");
-if (!/^[a-f0-9]{32}$/i.test(values.SECRETS_STORE_ID))
-  throw new Error("SECRETS_STORE_ID must be a 32-character hexadecimal ID.");
-if (!/^[a-f0-9]{32}$/i.test(accountId))
-  throw new Error("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal ID.");
-const hostLabels = values.PUBLIC_HOST.split(".");
-if (values.PUBLIC_HOST.length > 253 || hostLabels.length < 2 ||
-    hostLabels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)))
-  throw new Error("PUBLIC_HOST must be a valid DNS hostname without a scheme or path.");
-let publicUrl;
-try { publicUrl = new URL(values.PUBLIC_ORIGIN); } catch { throw new Error("PUBLIC_ORIGIN must be a valid HTTPS origin."); }
-if (publicUrl.protocol !== "https:" || publicUrl.hostname !== values.PUBLIC_HOST ||
-    publicUrl.username || publicUrl.password || publicUrl.pathname !== "/" ||
-    publicUrl.search || publicUrl.hash)
-  throw new Error("PUBLIC_ORIGIN must be the HTTPS origin matching PUBLIC_HOST.");
+validateBuildValues(values);
 
 /** Call the Cloudflare API and reject both HTTP and API-level failures. */
 async function api(path, options = {}) {
