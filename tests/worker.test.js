@@ -244,8 +244,12 @@ test("Production requests require Cloudflare Workers Access context", async () =
   assert.equal((await worker.fetch(req("/"), e)).status, 403);
   assert.equal((await worker.fetch(req("/api/images"), e)).status, 403);
   const accessContext = { access: { aud: "test-audience", getIdentity: async () => ({ email: "test@example.com" }) } };
+  e.CF_ACCESS_AUD = "test-audience";
   assert.equal((await worker.fetch(req("/"), e, accessContext)).status, 200);
   assert.equal((await worker.fetch(req("/api/images"), e, accessContext)).status, 200);
+  e.CF_ACCESS_AUD = "different-audience";
+  assert.equal((await worker.fetch(req("/"), e, accessContext)).status, 403);
+  e.CF_ACCESS_AUD = "";
 });
 test("Standalone Access fallback accepts a valid RS256 JWT", async () => {
   const team = "test.cloudflareaccess.com";
@@ -747,18 +751,28 @@ test("password mode: login page, wrong password, session cookie and logout", asy
   assert.match(out.headers.get("set-cookie"), /Max-Age=0/);
 });
 
-test("Password login is persistently rate-limited across the instance", async () => {
+test("Password login rate limits each client independently without exposing IP addresses", async () => {
   const e = env();
   e.AUTH_MODE = "password";
   e.ADMIN_PASSWORD = "correct horse battery";
-  const login = () => worker.fetch(req("/auth/login", {
+  const login = (ip, password) => worker.fetch(req("/auth/login", {
     method: "POST",
-    body: new URLSearchParams({ password: "wrong password" }),
+    headers: { "cf-connecting-ip": ip },
+    body: new URLSearchParams({ password }),
   }), e);
-  for (let i = 0; i < 8; i++) assert.equal((await login()).status, 401);
-  const limited = await login();
+  for (let i = 0; i < 8; i++)
+    assert.equal((await login("192.0.2.10", "wrong password")).status, 401);
+  const limited = await login("192.0.2.10", "correct horse battery");
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers.get("retry-after")) > 0);
+
+  const otherClient = await login("192.0.2.11", "wrong password");
+  assert.equal(otherClient.status, 401);
+  const success = await login("192.0.2.11", "correct horse battery");
+  assert.equal(success.status, 303);
+  const keys = [...e.GALLERY_BUCKET.items.keys()].filter((key) => key.includes("login-rate-limit/"));
+  assert.equal(keys.length, 2);
+  assert.ok(keys.every((key) => !key.includes("192.0.2.")));
 });
 
 test("Theme uploads are rejected while a deletion lease is active", async () => {
