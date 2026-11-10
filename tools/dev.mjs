@@ -1,4 +1,5 @@
-import { watch } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { spawn } from "node:child_process";
 
 const isWindows = process.platform === "win32";
@@ -9,6 +10,9 @@ let debounceTimer = null;
 let building = false;
 let pending = false;
 let shuttingDown = false;
+const rootDevVars = resolve(".dev.vars");
+const renderedDevVars = resolve(".cloudflare-build", ".dev.vars");
+const renderedDevVarsMarker = resolve(".cloudflare-build", ".dev-vars-owned");
 
 /** Run a project command and reject if it exits unsuccessfully. */
 function run(command, args) {
@@ -29,6 +33,52 @@ function run(command, args) {
 /** Build a complete staged Worker bundle before replacing the running dev process. */
 async function build() {
   await run(isWindows ? "npm.cmd" : "npm", ["run", "build:cloudflare"]);
+}
+
+/** Copy the root dotenv file beside the generated Wrangler config without parsing it. */
+function prepareDevVars() {
+  if (existsSync(renderedDevVarsMarker)) {
+    if (lstatSync(renderedDevVarsMarker).isSymbolicLink() || !lstatSync(renderedDevVarsMarker).isFile() ||
+        !existsSync(renderedDevVars) || lstatSync(renderedDevVars).isSymbolicLink() ||
+        !lstatSync(renderedDevVars).isFile())
+      throw new Error("Refusing to replace unowned generated .dev.vars files.");
+    rmSync(renderedDevVars);
+    rmSync(renderedDevVarsMarker);
+  } else if (existsSync(renderedDevVars)) {
+    throw new Error("Refusing to overwrite .cloudflare-build/.dev.vars without its ownership marker.");
+  }
+
+  let contents = "";
+  if (existsSync(rootDevVars)) {
+    const stat = lstatSync(rootDevVars);
+    if (!stat.isFile() || stat.isSymbolicLink())
+      throw new Error("Root .dev.vars must be a regular non-symlink file.");
+    contents = readFileSync(rootDevVars, "utf8");
+  }
+  if (!/^\\s*(?:export\\s+)?LOCAL_DEV\\s*=/m.test(contents)) {
+    const localDev = process.env.LOCAL_DEV === undefined ? "true" : process.env.LOCAL_DEV;
+    contents += (contents && !contents.endsWith("\\n") ? "\\n" : "") + "LOCAL_DEV=" + localDev + "\\n";
+  }
+  writeFileSync(renderedDevVars, contents, { flag: "wx", mode: 0o600 });
+  try {
+    writeFileSync(renderedDevVarsMarker, "Owned by tools/dev.mjs.\\n", { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    rmSync(renderedDevVars, { force: true });
+    throw error;
+  }
+}
+
+/** Remove only the generated dotenv copy marked as owned by this dev runner. */
+function cleanupDevVars() {
+  if (!existsSync(renderedDevVarsMarker)) return;
+  if (lstatSync(renderedDevVarsMarker).isSymbolicLink() || !lstatSync(renderedDevVarsMarker).isFile())
+    throw new Error("Generated .dev.vars ownership marker is unsafe.");
+  if (existsSync(renderedDevVars)) {
+    if (lstatSync(renderedDevVars).isSymbolicLink() || !lstatSync(renderedDevVars).isFile())
+      throw new Error("Generated .dev.vars is unsafe; refusing to remove it.");
+    rmSync(renderedDevVars);
+  }
+  rmSync(renderedDevVarsMarker);
 }
 
 /** Start Wrangler against the fully rendered and bundled configuration. */
@@ -96,7 +146,7 @@ async function rebuild() {
   if (successful && !shuttingDown) {
     try {
       await stopWrangler();
-      if (!shuttingDown) await startWrangler();
+      if (!shuttingDown) {\n    prepareDevVars();\n    await startWrangler();\n  }
     } catch (error) {
       console.error("Could not restart Wrangler:", error);
     }
@@ -128,7 +178,7 @@ function watchDirectory(path, filter = () => true) {
 /** Watch root-level configuration files that affect the generated Worker. */
 function watchRootFiles() {
   const relevant = new Set([
-    ".cloudflare.env", "build.mjs", "cloudflare.example.env", "package.json", "wrangler.jsonc",
+    ".cloudflare.env", ".dev.vars", "build.mjs", "cloudflare.example.env", "package.json", "wrangler.jsonc",
   ]);
   const watcher = watch(".", (_event, filename) => {
     if (filename && relevant.has(filename.toString())) scheduleRebuild();
