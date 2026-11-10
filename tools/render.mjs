@@ -2,7 +2,7 @@
 // Build a complete render in isolation, then atomically replace only owned output.
 import {
   closeSync, cpSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync,
-  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync,
+  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync ,
   rmSync, symlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -179,7 +179,7 @@ try {
     .filter((name) => name.startsWith(backupPrefix))
     .map((name) => join(parent, name))
     .filter((path) => existsSync(path))
-    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    .sort((a, b) => lstatSync(b).mtimeMs - lstatSync(a).mtimeMs);
   if (!existsSync(out) && backups.length) {
     const restore = backups.shift();
     assertOwnedOutput(restore);
