@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { inflateRawSync, deflateRawSync } from "node:zlib";
+import { randomBytes } from "node:crypto";
 import {
   autodetectImagePath,
   autodetectR2Key,
@@ -12,6 +13,7 @@ import {
   MEDIESVITEN_APPS,
 } from "../public/zip-import.js";
 
+/** Create a compact PNG header fixture for ZIP parser tests. */
 function png(width = 512, height = 512) {
   const b = new Uint8Array(33);
   b.set([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -25,6 +27,7 @@ function png(width = 512, height = 512) {
   return b;
 }
 let table;
+/** Compute CRC-32 for the synthetic ZIP local and central directory entries. */
 function crc32(buf) {
   if (!table)
     table = Array.from({ length: 256 }, (_, i) => {
@@ -36,13 +39,16 @@ function crc32(buf) {
   for (const x of buf) c = table[(c ^ x) & 255] ^ (c >>> 8);
   return (c ^ ~0) >>> 0;
 }
+/** Append a little-endian 16-bit integer to a ZIP record buffer. */
 function put16(a, n) {
   a.push(n & 255, (n >>> 8) & 255);
 }
+/** Append a little-endian 32-bit integer to a ZIP record buffer. */
 function put32(a, n) {
   put16(a, n);
   put16(a, n >>> 16);
 }
+/** Assemble a ZIP archive fixture with optional checksum corruption. */
 function zip(entries, overrideCrc = false) {
   let local = [],
     central = [],
@@ -286,4 +292,60 @@ test("A downloaded theme ZIP imports back into the same theme and apps", async (
   assert.equal(whisparr.app, "whisparr");
   assert.equal(whisparr.variant, "rida");
   assert.equal(whisparr.size, "1254x1254");
+});
+
+test("ZIP expansion budget is checked before inflation", async () => {
+  const file = zip(Array.from({ length: 6 }, (_, i) => ({
+    name: "apps/app-" + i + ".png",
+    data: randomBytes(8192),
+  })));
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  const end = bytes.length - 22;
+  const centralOffset = view.getUint32(end + 16, true);
+  const count = view.getUint16(end + 10, true);
+  let position = centralOffset;
+  for (let i = 0; i < count; i++) {
+    assert.equal(view.getUint32(position, true), 0x02014b50);
+    view.setUint32(position + 24, 12 * 1024 * 1024, true);
+    position += 46 + view.getUint16(position + 28, true) +
+      view.getUint16(position + 30, true) + view.getUint16(position + 32, true);
+  }
+  let inflateCalls = 0;
+  await assert.rejects(
+    readImageZip(new File([buffer], "bomb.zip"), () => {
+      inflateCalls++;
+      return new Uint8Array(0);
+    }),
+    /64 MB/,
+  );
+  assert.equal(inflateCalls, 5);
+});
+
+test("ZIP compression-ratio bombs are rejected before inflation", async () => {
+  const file = zip(Array.from({ length: 12 }, (_, i) => ({
+    name: "apps/app-" + i + ".png",
+    data: png(),
+  })));
+  const buffer = await file.arrayBuffer();
+  const view = new DataView(buffer);
+  const end = buffer.byteLength - 22;
+  const centralOffset = view.getUint32(end + 16, true);
+  const count = view.getUint16(end + 10, true);
+  let position = centralOffset;
+  for (let i = 0; i < count; i++) {
+    view.setUint32(position + 24, 12 * 1024 * 1024, true);
+    position += 46 + view.getUint16(position + 28, true) +
+      view.getUint16(position + 30, true) + view.getUint16(position + 32, true);
+  }
+  let inflateCalls = 0;
+  await assert.rejects(
+    readImageZip(new File([buffer], "ratio-bomb.zip"), () => {
+      inflateCalls++;
+      return new Uint8Array(0);
+    }),
+    /inga giltiga PNG-bilder/,
+  );
+  assert.equal(inflateCalls, 0);
 });

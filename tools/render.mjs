@@ -1,159 +1,253 @@
 #!/usr/bin/env node
-// Renders a deployable copy of this repo with your own values.
-//
-//   node tools/render.mjs <values.env | -> <out-dir> [overlay-dir]
-//
-// The repo holds only placeholders (__NAME__). Every NAME listed in
-// cloudflare.example.env must have a value in <values.env> (it may be empty);
-// each __NAME__ in the copied text files is replaced with its value. With "-"
-// the values are read from environment variables instead, e.g. the build
-// variables of Cloudflare Workers Builds or a container's environment.
-// Values may use \n for line breaks, or "@path" to read a file. Files in the
-// optional overlay directory are copied on top (e.g. your own images). Routes
-// whose pattern ends up empty are dropped from wrangler.jsonc. Deploy with
-//   npx wrangler deploy --cwd <out-dir>   (politiker: --cwd <out-dir>/app)
+// Build a complete render in isolation, then atomically replace only owned output.
 import {
-  closeSync,
-  cpSync,
-  existsSync,
-  fstatSync,
-  ftruncateSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  symlinkSync,
-  writeSync,
+  closeSync, cpSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync,
+  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync,
+  rmSync, symlinkSync, writeFileSync, writeSync,
 } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import { parseEnv } from "./env.mjs";
 
-const [valuesFile, outArg, overlayArg] = process.argv.slice(2);
+const [valuesFile, outArg, ...options] = process.argv.slice(2);
+const overlayArg = options.find((arg) => arg !== "--build");
+const buildOutput = options.includes("--build");
 if (!valuesFile || !outArg) {
-  console.error("usage: node tools/render.mjs <values.env | -> <out-dir> [overlay-dir]");
+  console.error("usage: node tools/render.mjs <values.env | -> <out-dir> [overlay-dir] [--build]");
   process.exit(2);
 }
-const source = resolve(dirname(new URL(import.meta.url).pathname), "..");
-const out = resolve(outArg);
-const SKIP = new Set(["node_modules", ".wrangler", "dist", ".dev.vars", ".git", ".github"]);
-const TEXT = new Set([
-  ".js",
-  ".mjs",
-  ".cjs",
-  ".ts",
-  ".html",
-  ".css",
-  ".txt",
-  ".xml",
-  ".json",
-  ".jsonc",
-  ".webmanifest",
-  ".toml",
-  ".sh",
-  ".py",
-  ".sql",
-  ".md",
-  ".svg",
-  "",
+
+const source = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
+const SKIP = new Set([
+  "node_modules", ".wrangler", "dist", "build", ".dev.vars", ".git", ".github",
+  ".cloudflare-build", "coverage", "tests", "docker", "docs", "tools", ".cache",
 ]);
+const TEXT = new Set([
+  ".js", ".mjs", ".cjs", ".ts", ".html", ".css", ".txt", ".xml", ".json",
+  ".jsonc", ".webmanifest", ".toml", ".sh", ".py", ".sql", ".md", ".svg", "",
+]);
+const MARKER = ".attic-render-output";
 
-function parseEnv(file) {
-  const values = new Map();
-  for (const line of readFileSync(file, "utf8").split("\n")) {
-    const match = line.match(/^([A-Z][A-Z0-9_]*)=(.*)$/);
-    if (!match) continue;
-    let value = match[2];
-    if (value.startsWith("@"))
-      value = readFileSync(resolve(dirname(file), value.slice(1)), "utf8").trimEnd();
-    values.set(match[1], value.replace(/\\n/g, "\n"));
+/** Test path containment using path segments rather than string prefixes. */
+function isInside(base, target) {
+  const rel = relative(base, target);
+  return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + sep));
+}
+
+/** Resolve an output path through its nearest existing real filesystem ancestor. */
+function canonicalTarget(path) {
+  let current = resolve(path);
+  const tail = [];
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) throw new Error("Cannot resolve output path.");
+    tail.unshift(basename(current));
+    current = parent;
   }
-  return values;
+  return resolve(realpathSync(current), ...tail);
 }
 
-const declared = [...parseEnv(join(source, "cloudflare.example.env")).keys()];
-const values =
-  valuesFile === "-"
-    ? new Map(
-        declared
-          .filter((name) => name in process.env)
-          .map((name) => [name, process.env[name].replace(/\\n/g, "\n")]),
-      )
-    : parseEnv(valuesFile);
-const missing = declared.filter((name) => !values.has(name));
-if (missing.length) {
-  console.error(
-    `${valuesFile === "-" ? "the environment" : valuesFile} is missing: ${missing.join(", ")}`,
-  );
-  process.exit(1);
+/** Exclude environment files, credentials, and private-key material from renders. */
+function isEnvFile(path) {
+  const name = basename(path);
+  return name === ".env" || name.startsWith(".env.") || name === ".envrc" ||
+    name === ".dev.vars" || name.startsWith(".dev.vars.") || name.endsWith(".env") ||
+    name === ".cloudflare.env" || name.startsWith(".cloudflare.env.") ||
+    [".npmrc", ".netrc", ".pypirc", "credentials", "credentials.json"].includes(name) ||
+    /(?:^|[-_.])(secret|secrets|credentials?)(?:[-_.]|$)/i.test(name) ||
+    /^(?:id_(?:rsa|ed25519|ecdsa|dsa)(?:$|[._-].*)|identity|ssh_host_.+_key)$/i.test(name) ||
+    /\.(?:pem|key|p8|p12|pfx|keystore)$/i.test(name);
 }
 
-rmSync(out, { recursive: true, force: true });
-// The output may sit inside the repo (e.g. build/), so copy entry by entry and
-// never into itself.
-const keep = (path) =>
-  path !== out &&
-  !path.startsWith(out + "/") &&
-  !relative(source, path)
-    .split("/")
-    .some((part) => SKIP.has(part));
-for (const name of readdirSync(source)) {
-  const path = join(source, name);
-  if (keep(path)) cpSync(path, join(out, name), { recursive: true, filter: keep });
-}
-if (overlayArg && existsSync(overlayArg)) cpSync(overlayArg, out, { recursive: true });
+const PRIVATE_KEY_HEADER = /-----BEGIN (?:OPENSSH |RSA |EC |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----|PuTTY-User-Key-File-/i;
 
-// Dependencies stay in the repo; link them instead of copying.
-(function linkModules(dir) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (
-      !entry.isDirectory() ||
-      entry.name.startsWith(".") ||
-      (SKIP.has(entry.name) && entry.name !== "node_modules") ||
-      join(dir, entry.name) === out
-    )
-      continue;
-    const path = join(dir, entry.name);
-    if (entry.name === "node_modules") {
-      symlinkSync(path, join(out, relative(source, path)));
-    } else if (relative(source, path).split("/").length < 3) {
-      linkModules(path);
+/** Copy a tree without following symlinks or including private-key material. */
+function copyTree(from, to, include) {
+  const stat = lstatSync(from);
+  if (stat.isSymbolicLink()) throw new Error("Symlinks are not allowed in copied trees: " + from);
+  if (stat.isDirectory()) {
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from)) {
+      const child = join(from, name);
+      if (include(child)) copyTree(child, join(to, name), include);
     }
-  }
-})(source);
-
-let replaced = 0;
-(function substitute(dir) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) {
-      substitute(path);
-      continue;
-    }
-    if (!TEXT.has(extname(entry.name)) && entry.name !== "_headers") continue;
-    // Size check, read and write all go through one descriptor, so the file
-    // cannot be swapped between them.
-    const fd = openSync(path, "r+");
+  } else if (stat.isFile()) {
+    const fd = openSync(from, "r");
+    let header;
     try {
-      if (fstatSync(fd).size > 5_000_000) continue;
-      let text = readFileSync(fd, "utf8");
-      const before = text;
-      for (const name of declared) text = text.split(`__${name}__`).join(values.get(name));
-      if (entry.name === "wrangler.jsonc") {
-        text = text.replace(/\{\s*"pattern":\s*""[^}]*\},?\s*/g, "");
-      }
-      if (text !== before) {
-        // writeSync may write less than asked, so loop until every byte is out.
-        const bytes = Buffer.from(text, "utf8");
-        ftruncateSync(fd);
-        for (let done = 0; done < bytes.length;) {
-          done += writeSync(fd, bytes, done, bytes.length - done, done);
-        }
-        replaced++;
-      }
+      const sample = Buffer.alloc(512);
+      const count = readSync(fd, sample, 0, sample.length, 0);
+      header = sample.toString("utf8", 0, count);
     } finally {
       closeSync(fd);
     }
+    if (PRIVATE_KEY_HEADER.test(header)) return;
+    mkdirSync(dirname(to), { recursive: true });
+    cpSync(from, to);
   }
-})(out);
+}
 
-console.log(`rendered into ${out} (${replaced} files filled in)`);
+/** Refuse to replace paths unless they are regular directories marked by this renderer. */
+function assertOwnedOutput(path) {
+  if (!existsSync(path)) return;
+  const stat = lstatSync(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink())
+    throw new Error("Existing output path must be a renderer-owned directory.");
+  const marker = join(path, MARKER);
+  if (!existsSync(marker) || !lstatSync(marker).isFile() || lstatSync(marker).isSymbolicLink())
+    throw new Error("Refusing to replace an existing directory not created by this renderer.");
+}
+
+const outRequested = resolve(outArg);
+const parentRequested = dirname(outRequested);
+mkdirSync(parentRequested, { recursive: true });
+if (existsSync(outRequested) && lstatSync(outRequested).isSymbolicLink())
+  throw new Error("Refusing to use a symlink as the output directory.");
+const out = canonicalTarget(outRequested);
+const parent = dirname(out);
+if (out === source || isInside(out, source))
+  throw new Error("Output directory cannot be the source directory or one of its parents.");
+
+let overlay = null;
+if (overlayArg) {
+  const overlayRequested = resolve(overlayArg);
+  if (!existsSync(overlayRequested) || lstatSync(overlayRequested).isSymbolicLink())
+    throw new Error("Overlay directory must exist and cannot be a symlink.");
+  overlay = realpathSync(overlayRequested);
+  if (!lstatSync(overlay).isDirectory())
+    throw new Error("Overlay path must be a directory.");
+  if (isInside(source, overlay) || isInside(overlay, source) ||
+      isInside(out, overlay) || isInside(overlay, out))
+    throw new Error("Overlay, output and source directories must be separate.");
+}
+
+const declared = [...parseEnv(join(source, "cloudflare.example.env")).keys()];
+const values = valuesFile === "-"
+  ? new Map(declared.filter((name) => name in process.env)
+      .map((name) => [name, String(process.env[name]).replace(/\\n/g, "\n")]))
+  : parseEnv(resolve(valuesFile));
+const missing = declared.filter((name) => !values.has(name));
+if (missing.length) {
+  console.error((valuesFile === "-" ? "the environment" : valuesFile) +
+    " is missing: " + missing.join(", "));
+  process.exit(1);
+}
+
+const lockPath = out + ".lock";
+let lockFd;
+let stage = null;
+let backup = null;
+try {
+  lockFd = openSync(lockPath, "wx", 0o600);
+  writeFileSync(lockFd, String(process.pid));
+} catch (error) {
+  if (error.code === "EEXIST")
+    throw new Error("Another render is already running for " + out + ".");
+  throw error;
+}
+
+try {
+  assertOwnedOutput(out);
+  stage = mkdtempSync(join(parent, "." + basename(out) + ".stage-"));
+  const includeSource = (path) => {
+    const name = basename(path);
+    if (path === lockPath || isInside(out, path) || isInside(stage, path) || isEnvFile(path))
+      return false;
+    if (name.startsWith(basename(out) + ".backup-") ||
+        name.startsWith("." + basename(out) + ".stage-"))
+      return false;
+    return !relative(source, path).split(sep).some((part) => SKIP.has(part));
+  };
+  copyTree(source, stage, includeSource);
+  if (overlay) copyTree(overlay, stage, (path) => !isEnvFile(path));
+
+  writeFileSync(join(stage, MARKER), "Generated by tools/render.mjs. Safe to replace.\n",
+    { mode: 0o600 });
+  const modules = join(source, "node_modules");
+  if (existsSync(modules)) symlinkSync(modules, join(stage, "node_modules"), "dir");
+
+  let replaced = 0;
+  (function substitute(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) { substitute(path); continue; }
+      if (!entry.isFile() || (!TEXT.has(extname(entry.name)) && entry.name !== "_headers"))
+        continue;
+      const fd = openSync(path, "r+");
+      try {
+        if (fstatSync(fd).size > 5_000_000) continue;
+        let text = readFileSync(fd, "utf8");
+        const before = text;
+        if (entry.name === "wrangler.jsonc") {
+          for (const name of declared) {
+            const escaped = JSON.stringify(values.get(name)).slice(1, -1);
+            text = text.split("__" + name + "__").join(escaped);
+          }
+          const unresolved = text.match(/__[A-Z][A-Z0-9_]*__/g);
+          if (unresolved)
+            throw new Error("wrangler.jsonc contains undeclared placeholders: " + [...new Set(unresolved)].join(", "));
+          const config = JSON.parse(text);
+          if (Array.isArray(config.routes))
+            config.routes = config.routes.filter((route) => route.pattern);
+          text = JSON.stringify(config, null, 2) + "\n";
+        }
+        if (text !== before) {
+          const bytes = Buffer.from(text, "utf8");
+          ftruncateSync(fd);
+          for (let done = 0; done < bytes.length;)
+            done += writeSync(fd, bytes, done, bytes.length - done, done);
+          replaced++;
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
+  })(stage);
+
+  if (buildOutput) {
+    const result = spawnSync(process.execPath, ["build.mjs"], { cwd: stage, stdio: "inherit" });
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      throw new Error("Worker bundle build failed; previous rendered output was preserved.");
+  }
+
+  // Recheck immediately before moving the existing output. Never recursively delete it.
+  assertOwnedOutput(out);
+  if (existsSync(out)) {
+    backup = out + ".backup-" + randomUUID();
+    renameSync(out, backup);
+    try {
+      // A path could have been swapped between the check and rename. Verify
+      // the moved directory before ever allowing it to be removed.
+      assertOwnedOutput(backup);
+    } catch (error) {
+      renameSync(backup, out);
+      backup = null;
+      throw error;
+    }
+  }
+  try {
+    renameSync(stage, out);
+    stage = null;
+  } catch (error) {
+    if (backup && existsSync(backup)) {
+      renameSync(backup, out);
+      backup = null;
+    }
+    throw error;
+  }
+  if (backup) {
+    assertOwnedOutput(backup);
+    rmSync(backup, { recursive: true, force: true });
+    backup = null;
+  }
+  console.log("rendered into " + out + " (" + replaced + " files filled in)");
+} finally {
+  if (stage && existsSync(stage)) rmSync(stage, { recursive: true, force: true });
+  if (backup && existsSync(backup) && !existsSync(out)) renameSync(backup, out);
+  if (lockFd !== undefined) closeSync(lockFd);
+  rmSync(lockPath, { force: true });
+}

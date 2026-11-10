@@ -3,7 +3,8 @@
 export const ZIP_LIMIT = 80 * 1024 * 1024;
 export const ZIP_IMAGE_LIMIT = 100;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
-const MAX_EXPANDED_BYTES = 140 * 1024 * 1024;
+const MAX_EXPANDED_BYTES = 64 * 1024 * 1024;
+const MAX_COMPRESSION_RATIO = 2048;
 const MAX_ENTRIES = 500;
 const SIG_CENTRAL = 0x02014b50;
 const SIG_LOCAL = 0x04034b50;
@@ -11,6 +12,7 @@ const SIG_END = 0x06054b50;
 const textDecoder = new TextDecoder("utf-8");
 const pngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
+/** Read supported square PNG dimensions from a validated image header. */
 export function imageDimensions(bytes) {
   if (bytes.byteLength < 33 || !pngSignature.every((v, i) => bytes[i] === v)) return null;
   const d = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -21,6 +23,7 @@ export function imageDimensions(bytes) {
     return null;
   return `${width}x${height}`;
 }
+/** Normalize archive text for safe filename matching. */
 function normalized(text) {
   return String(text || "")
     .normalize("NFD")
@@ -32,6 +35,7 @@ function normalized(text) {
 }
 const GENERIC =
   /^(?:icon|ikon|bild|image|img|png|logo|cover|export|untitled|namnlos|new|ny|theme|tema|design|asset|file)(?:-\d+)?$/;
+/** Derive an application hint from an image filename. */
 function nameHint(filename) {
   let val = normalized(filename.replace(/\.png$/i, ""));
   val = val
@@ -84,6 +88,7 @@ const KNOWN_APPS = new Set([
   "seerr",
 ]);
 export const MEDIESVITEN_APPS = [...KNOWN_APPS];
+/** Identify supported image paths inside an imported ZIP entry. */
 export function autodetectImagePath(path) {
   const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
   const file = parts.at(-1) || "";
@@ -146,6 +151,7 @@ export function autodetectImagePath(path) {
 }
 // R2 keys: numbered sets like apps/plex/plex-3-512.png are one theme per number,
 // so they become theme tema-3. Everything else follows the ZIP path rules.
+/** Identify allowed legacy R2 image keys for import. */
 export function autodetectR2Key(key) {
   const rel = key.replace(/^imported\//, "");
   const numbered = rel.match(/(?:^|\/)([a-z0-9_-]+)\/\1-(\d{1,2})(?:-\d{3,4})?\.png$/i);
@@ -166,6 +172,7 @@ export function autodetectR2Key(key) {
   return hint;
 }
 let crcTable;
+/** Compute the ZIP CRC-32 checksum for an entry payload. */
 function crc32(bytes) {
   if (!crcTable)
     crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -178,6 +185,7 @@ function crc32(bytes) {
   return (c ^ 0xffffffff) >>> 0;
 }
 // Stored (uncompressed) ZIP: PNGs are already compressed, so deflate gains nothing.
+/** Assemble stored ZIP entries from the supplied file metadata and byte arrays. */
 export function buildStoredZip(files) {
   const encoder = new TextEncoder();
   const local = [],
@@ -218,12 +226,14 @@ export function buildStoredZip(files) {
   return new Blob([...local, ...central, end], { type: "application/zip" });
 }
 
+/** Throw a consistent validation error for malformed ZIP archives. */
 function bad(message) {
   throw new Error(message);
 }
 /** Reads a ZIP (stored/deflate) and returns new images plus skipped entries.
  * `inflateRaw` must accept Uint8Array and return Uint8Array (pako.inflateRaw).
  */
+/** Safely parse a ZIP, enforce expansion limits, and return valid PNG image files. */
 export async function readImageZip(file, inflateRaw) {
   if (!file || file.size > ZIP_LIMIT || file.size < 22)
     bad("ZIP-filen måste vara mellan 22 byte och 80 MB.");
@@ -310,8 +320,16 @@ export async function readImageZip(file, inflateRaw) {
       skipped.push({ path, reason: "Bilden måste vara högst 12 MB" });
       continue;
     }
+    if ((method === 8 && (!compressed || expanded / compressed > MAX_COMPRESSION_RATIO)) ||
+        (method === 0 && compressed !== expanded)) {
+      skipped.push({ path, reason: "ZIP-komprimeringsgraden är för hög eller felaktig" });
+      continue;
+    }
+    // Count declared expansion before inflating or validating the PNG. Invalid
+    // PNG payloads must consume the same budget as valid images.
     if (total + expanded > MAX_EXPANDED_BYTES)
-      bad("ZIP-filen innehåller mer än 140 MB bilder. Dela upp den.");
+      bad("ZIP-filen innehåller mer än 64 MB bilder. Dela upp den.");
+    total += expanded;
     if (local + 30 > b.length || u32(local) !== SIG_LOCAL) bad("Skadad ZIP-fil (fildata).");
     if (u16(local + 8) !== method || u16(local + 6) & 1)
       bad("ZIP-filen har motstridiga filuppgifter.");
@@ -335,7 +353,6 @@ export async function readImageZip(file, inflateRaw) {
       skipped.push({ path, reason: "Kräver PNG i 512×512 eller 1254×1254" });
       continue;
     }
-    total += expanded;
     const hint = autodetectImagePath(path);
     const name = path.split("/").at(-1);
     images.push({
@@ -363,10 +380,12 @@ export async function readImageZip(file, inflateRaw) {
 
 // A theme folder that is missing or only says "tema"/"untitled" takes its name
 // from the ZIP file instead, so Neon.zip with tema/plex/... becomes theme neon.
+/** Derive a normalized theme name from an archive filename. */
 export function themeNameFromZip(filename) {
   const name = normalized(String(filename || "").replace(/\.zip$/i, ""));
   return !name || GENERIC.test(name) || /^\d+$/.test(name) ? "" : name;
 }
+/** Fill absent theme labels using the archive's normalized name. */
 export function fillMissingThemes(images, zipName) {
   const fallback = themeNameFromZip(zipName);
   if (!fallback) return images;
@@ -375,6 +394,7 @@ export function fillMissingThemes(images, zipName) {
   );
 }
 
+/** Validate and normalize image entries before creating an import archive. */
 export function validateMediesviten(images) {
   const missing = [];
   for (const app of MEDIESVITEN_APPS) {

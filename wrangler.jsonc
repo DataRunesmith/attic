@@ -8,9 +8,6 @@
   "observability": {
     "enabled": true
   },
-  "build": {
-    "command": "node build.mjs"
-  },
   "routes": [
     {
       "pattern": "__PUBLIC_HOST__",
@@ -33,5 +30,6 @@
       "store_id": "__SECRETS_STORE_ID__",
       "secret_name": "WORKERS_API_TOKEN"
     }
-  ]
+  ],
+  "account_id": "__CLOUDFLARE_ACCOUNT_ID__"
 }

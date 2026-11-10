@@ -9,11 +9,13 @@ let images = [];
 let busy = false;
 
 const niceName = (name) => (name || "").replace(/-/g, " ").replace(/\b\w/g, (x) => x.toUpperCase());
+/** Show a transient theme-library status message. */
 function toast(message) {
   $("toast").textContent = message;
   $("toast").classList.add("visible");
   setTimeout(() => $("toast").classList.remove("visible"), 2600);
 }
+/** Create a button with the shared theme-library interaction styling. */
 function button(label, className, onClick) {
   const b = document.createElement("button");
   b.type = "button";
@@ -23,6 +25,7 @@ function button(label, className, onClick) {
   return b;
 }
 
+/** Derive a safe archive path for one selected theme image. */
 function zipPath(image) {
   return [
     "themes",
@@ -32,6 +35,7 @@ function zipPath(image) {
     image.name,
   ].join("/");
 }
+/** Download selected theme images as an archive and restore UI state on completion. */
 async function download(theme, sizes, trigger) {
   const chosen = images.filter((x) => x.theme === theme && sizes.includes(x.dimensions));
   if (!chosen.length) return toast("Välj minst en upplösning som temat har.");
@@ -59,11 +63,14 @@ async function download(theme, sizes, trigger) {
   }
 }
 
+/** Delete a theme and refresh dependent views even when the server reports partial progress. */
 async function remove(theme, count) {
   if (!confirm(`Radera temat ${niceName(theme)} med ${count} bilder? Det går inte att ångra.`))
     return;
   busy = true;
+  let deletionRequested = false;
   try {
+    deletionRequested = true;
     const response = await fetch("/api/themes/delete", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
@@ -72,14 +79,16 @@ async function remove(theme, count) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `Serverfel ${response.status}`);
     toast(`Temat ${niceName(theme)} är raderat.`);
-    window.dispatchEvent(new Event("attic:zip-updated"));
   } catch (err) {
     toast(err.message);
   } finally {
+    // A failed response may still mean that the server deleted a bounded batch.
+    if (deletionRequested) window.dispatchEvent(new Event("attic:zip-updated"));
     busy = false;
   }
 }
 
+/** Open the selected theme in the configured launcher workflow. */
 function useInLauncher(theme) {
   const select = $("d-name");
   if ([...select.options].some((x) => x.value === theme)) {
@@ -89,6 +98,7 @@ function useInLauncher(theme) {
   $("d-theme").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+/** Render one theme card and its available image counts. */
 function card(theme, items) {
   const el = document.createElement("article");
   el.className = "theme-card";
@@ -147,6 +157,7 @@ function card(theme, items) {
   return el;
 }
 
+/** Render the current theme catalogue and selection state. */
 function render() {
   const byTheme = new Map();
   for (const image of images) {
@@ -165,6 +176,7 @@ function render() {
   }
 }
 
+/** Display the theme library and apply an optional initial selection. */
 export function showThemes(next) {
   images = next;
   render();

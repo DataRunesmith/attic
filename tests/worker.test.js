@@ -1,8 +1,10 @@
 import test from "node:test";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import worker, { slug, keyToImage, uploadedImageInfo } from "../src/index.js";
 
+/** Create the intentionally incomplete PNG header fixture. */
 function png(width = 512, height = 512) {
   const buffer = new ArrayBuffer(33);
   const bytes = new Uint8Array(buffer);
@@ -16,6 +18,99 @@ function png(width = 512, height = 512) {
   bytes[25] = 6;
   return buffer;
 }
+const validPngCache = new Map();
+/** Compute the PNG CRC-32 used to create valid and corrupted test chunks. */
+function pngCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++)
+      crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+/** Encode a PNG chunk with its length, type, payload, and CRC. */
+function pngChunk(type, data) {
+  const name = new TextEncoder().encode(type);
+  const chunk = new Uint8Array(12 + data.length);
+  const view = new DataView(chunk.buffer);
+  view.setUint32(0, data.length);
+  chunk.set(name, 4);
+  chunk.set(data, 8);
+  view.setUint32(8 + data.length, pngCrc32(chunk.subarray(4, 8 + data.length)));
+  return chunk;
+}
+/** Create a valid non-interlaced RGBA PNG fixture for upload tests. */
+function validPng(width = 512, height = 512, ancillary = []) {
+  const key = width + "x" + height + (ancillary.length ? ":ancillary" : "");
+  if (validPngCache.has(key)) return validPngCache.get(key);
+  const header = new Uint8Array(13);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  header[8] = 8;
+  header[9] = 6;
+  const raw = new Uint8Array(height * (1 + width * 4));
+  const compressed = new Uint8Array(deflateSync(raw));
+  const chunks = [
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", header),
+    ...ancillary,
+    pngChunk("IDAT", compressed),
+    pngChunk("IEND", new Uint8Array(0)),
+  ];
+  const result = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+  validPngCache.set(key, result.buffer);
+  return result.buffer;
+}
+/** Create a PNG fixture with controlled invalid stream and header properties. */
+function pngWithOptions({
+  colorType = 6,
+  interlace = 0,
+  filter = 0,
+  includePalette = true,
+  idatBeforePalette = false,
+  includeIend = true,
+  truncateZlib = false,
+  apng = false,
+  rawLength,
+  trailing = false,
+} = {}) {
+  const width = 512, height = 512;
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
+  const rowBytes = Math.ceil(width * channels);
+  const stride = rowBytes + 1;
+  const raw = new Uint8Array(rawLength ?? stride * height);
+  for (let y = 0; y < height && y * stride < raw.length; y++) raw[y * stride] = filter;
+  const header = new Uint8Array(13);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  header[8] = 8;
+  header[9] = colorType;
+  header[12] = interlace;
+  const chunks = [
+    new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", header),
+  ];
+  if (apng) chunks.push(pngChunk("acTL", new Uint8Array(8)));
+  const compressed = new Uint8Array(deflateSync(raw));
+  const idatData = truncateZlib ? compressed.subarray(0, compressed.length - 2) : compressed;
+  const idat = pngChunk("IDAT", idatData);
+  if (colorType === 3 && includePalette) {
+    const palette = pngChunk("PLTE", new Uint8Array([0, 0, 0]));
+    if (idatBeforePalette) chunks.push(idat, palette);
+    else chunks.push(palette, idat);
+  } else chunks.push(idat);
+  if (includeIend) chunks.push(pngChunk("IEND", new Uint8Array(0)));
+  const result = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0) + (trailing ? 1 : 0));
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.length; }
+  return result.buffer;
+}
+/** Provide a deterministic R2 test double with conditional-write support. */
 function createBucket() {
   const items = new Map();
   const encode = (buffer) =>
@@ -38,18 +133,25 @@ function createBucket() {
         }));
       return { objects: objs, truncated: false };
     },
-    async put(key, buffer, metadata) {
+    async put(key, buffer, metadata = {}) {
+      const current = items.get(key);
+      if (metadata.onlyIf?.etagDoesNotMatch === "*" && current) return null;
+      if (metadata.onlyIf?.etagMatches &&
+          current?.etag !== metadata.onlyIf.etagMatches) return null;
       let data;
       if (buffer?.getReader) {
         const response = new Response(buffer);
         data = new Uint8Array(await response.arrayBuffer());
-      } else data = encode(buffer);
-      items.set(key, {
+      } else if (typeof buffer === "string") data = new TextEncoder().encode(buffer);
+      else data = encode(buffer);
+      const stored = {
         buffer: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
         metadata,
         etag: createHash("md5").update(data).digest("hex"),
         uploaded: new Date("2026-10-15T12:00:00Z"),
-      });
+      };
+      items.set(key, stored);
+      return { etag: stored.etag };
     },
     async get(key, opts) {
       const x = items.get(key);
@@ -67,6 +169,9 @@ function createBucket() {
         customMetadata: x.metadata?.customMetadata || {},
         async arrayBuffer() {
           return data.slice(0);
+        },
+        async text() {
+          return new TextDecoder().decode(data);
         },
       };
     },
@@ -86,19 +191,22 @@ const assets = {
     });
   },
 };
+/** Build the Worker environment used by isolated request tests. */
 function env(bucket = createBucket()) {
   return {
     GALLERY_BUCKET: bucket,
     LEGACY_BUCKET: createBucket(),
     ASSETS: assets,
     GALLERY_PREFIX: "gallery/",
-    PUBLIC_ASSET_ORIGIN: "__PUBLIC_ORIGIN__/bilder",
+    PUBLIC_ORIGIN: "http://localhost",
     LOCAL_DEV: "true",
   };
 }
+/** Build a same-origin Worker request with optional request settings. */
 function req(path = "/", opts = {}) {
   return new Request(`http://localhost${path}`, opts);
 }
+/** Build a multipart PNG upload request with the supplied image metadata. */
 function uploadForm(
   filename = "plex.png",
   width = 512,
@@ -111,9 +219,10 @@ function uploadForm(
   form.set("category", category);
   form.set("app", app);
   form.set("theme", theme);
-  form.set("file", new File([png(width, height)], filename, { type: "image/png" }));
+  form.set("file", new File([validPng(width, height)], filename, { type: "image/png" }));
   return form;
 }
+/** Send a same-origin multipart upload request to the Worker. */
 function post(form, extra = {}) {
   return req("/api/upload", {
     method: "POST",
@@ -122,24 +231,83 @@ function post(form, extra = {}) {
   });
 }
 
-test("All production requests are denied unless Access JWT is configured and verified", async () => {
+test("API rejects an invalid public asset origin", async () => {
+  const e = env();
+  e.PUBLIC_ORIGIN = 'https://example.com/path";globalThis.injected=true';
+  const response = await worker.fetch(req("/api/images"), e);
+  assert.equal(response.status, 503);
+});
+
+test("Production requests require Cloudflare Workers Access context", async () => {
   const e = env();
   delete e.LOCAL_DEV;
-  const response = await worker.fetch(req("/"), e);
-  assert.equal(response.status, 403);
+  assert.equal((await worker.fetch(req("/"), e)).status, 403);
   assert.equal((await worker.fetch(req("/api/images"), e)).status, 403);
-  e.CF_ACCESS_AUD = "__CF_ACCESS_AUD__";
-  e.CF_ACCESS_TEAM_DOMAIN = "team.cloudflareaccess.com";
+  const accessContext = { access: { aud: "test-audience", getIdentity: async () => ({ email: "test@example.com" }) } };
+  assert.equal((await worker.fetch(req("/"), e, accessContext)).status, 200);
+  assert.equal((await worker.fetch(req("/api/images"), e, accessContext)).status, 200);
+});
+test("Standalone Access fallback accepts a valid RS256 JWT", async () => {
+  const team = "test.cloudflareaccess.com";
+  const audience = "test-audience";
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = { ...publicKey.export({ format: "jwk" }), kid: "test-key", alg: "RS256", use: "sig" };
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({ alg: "RS256", kid: "test-key", typ: "JWT" });
+  const now = Math.floor(Date.now() / 1000);
+  const makeToken = (claims) => {
+    const payload = encode({ iss: "https://" + team, aud: [audience], ...claims });
+    const input = header + "." + payload;
+    return input + "." + sign("RSA-SHA256", Buffer.from(input), privateKey).toString("base64url");
+  };
+  const token = makeToken({ exp: now + 300, nbf: now - 1 });
+  const e = env();
+  e.LOCAL_DEV = "false";
+  e.AUTH_MODE = "cloudflare-access";
+  e.CF_ACCESS_TEAM_DOMAIN = team;
+  e.CF_ACCESS_AUD = audience;
+  const originalFetch = globalThis.fetch;
+  let fetched = "";
+  globalThis.fetch = async (url) => {
+    fetched = String(url);
+    return new Response(JSON.stringify({ keys: [jwk] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const request = req("/", { headers: { "cf-access-jwt-assertion": token } });
+    assert.equal((await worker.fetch(request, e)).status, 200);
+    assert.equal(fetched, "https://" + team + "/cdn-cgi/access/certs");
+    const missingExpiry = req("/", { headers: { "cf-access-jwt-assertion": makeToken({ nbf: now - 1 }) } });
+    assert.equal((await worker.fetch(missingExpiry, e)).status, 403);
+    const invalidNotBefore = req("/", {
+      headers: { "cf-access-jwt-assertion": makeToken({ exp: now + 300, nbf: "not-a-time" }) },
+    });
+    assert.equal((await worker.fetch(invalidNotBefore, e)).status, 403);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Standalone Access fallback rejects missing, malformed and placeholder credentials", async () => {
+  const e = env();
+  delete e.LOCAL_DEV;
+  e.AUTH_MODE = "cloudflare-access";
+  e.CF_ACCESS_TEAM_DOMAIN = "example.cloudflareaccess.com";
+  e.CF_ACCESS_AUD = "valid-audience";
+  assert.equal((await worker.fetch(req("/"), e)).status, 403);
   assert.equal(
-    (
-      await worker.fetch(
-        req("/api/images", { headers: { "cf-access-jwt-assertion": "invalid" } }),
-        e,
-      )
-    ).status,
+    (await worker.fetch(req("/", { headers: { "cf-access-jwt-assertion": "not.a.jwt" } }), e)).status,
+    403,
+  );
+  e.CF_ACCESS_AUD = "__CF_ACCESS_AUD__";
+  assert.equal(
+    (await worker.fetch(req("/", { headers: { "cf-access-jwt-assertion": "not.a.jwt" } }), e)).status,
     403,
   );
 });
+
 test("Local test flag never works on deployed domain", async () => {
   const response = await worker.fetch(new Request("https://gallery.example.com/"), env());
   assert.equal(response.status, 403);
@@ -169,7 +337,7 @@ test("Upload actual 512x512 PNG and list usable public link", async () => {
   assert.equal(img.app, "plex");
   assert.equal(img.dimensions, "512x512");
   assert.match(img.key, /^gallery\/apps\/plex\/plex-512x512-[a-z0-9]{8}\.png$/);
-  assert.equal(img.url, `__PUBLIC_ORIGIN__/bilder/${img.key}`);
+  assert.equal(img.url, `http://localhost/bilder/${img.key}`);
   assert.equal(e.GALLERY_BUCKET.items.get(img.key).metadata.httpMetadata.contentType, "image/png");
 });
 test("Upload themes with category and application name in path", async () => {
@@ -209,7 +377,7 @@ test("Reject other methods and write access without bound bucket", async () => {
   delete e.GALLERY_BUCKET;
   assert.equal((await worker.fetch(req("/api/images"), e)).status, 503);
 });
-test("Normalize labels and reject filepaths not controlled by the gallery", () => {
+test("Normalize labels and reject filepaths not controlled by the gallery", async () => {
   assert.equal(slug(" Mörk natt! "), "mork-natt");
   assert.equal(slug("../_system/"), "system");
   assert.equal(
@@ -220,8 +388,43 @@ test("Normalize labels and reject filepaths not controlled by the gallery", () =
     keyToImage({ key: "gallery/not-a-category/item.png" }, "gallery/", "__PUBLIC_ORIGIN__/bilder"),
     null,
   );
-  assert.deepEqual(uploadedImageInfo(png(512, 512)), { width: 512, height: 512 });
-  assert.equal(uploadedImageInfo(png(257, 257)), null);
+  assert.deepEqual(await uploadedImageInfo(validPng(512, 512)), { width: 512, height: 512 });
+  assert.equal(await uploadedImageInfo(png(512, 512)), null);
+  assert.equal(await uploadedImageInfo(validPng(257, 257)), null);
+});
+
+test("PNG validator accepts ancillary chunks and rejects malformed or animated streams", async () => {
+  const ancillary = validPng(512, 512, [
+    pngChunk("gAMA", new Uint8Array([0, 0, 177, 143])),
+  ]);
+  assert.deepEqual(await uploadedImageInfo(ancillary), { width: 512, height: 512 });
+
+  const badCrc = new Uint8Array(validPng(512, 512));
+  badCrc[32] ^= 1;
+  const badLength = new Uint8Array(validPng(512, 512));
+  badLength[8] = 0x7f;
+  const expected = (512 * 4 + 1) * 512;
+  const shortRaw = pngWithOptions({ rawLength: expected - 1 });
+  const longRaw = pngWithOptions({ rawLength: expected + 1 });
+  const badFilter = pngWithOptions({ filter: 5 });
+  const noPalette = pngWithOptions({ colorType: 3, includePalette: false });
+  const idatBeforePalette = pngWithOptions({ colorType: 3, idatBeforePalette: true });
+  const interlaced = pngWithOptions({ interlace: 1 });
+  const missingIend = pngWithOptions({ includeIend: false });
+  const trailing = pngWithOptions({ trailing: true });
+  const truncatedZlib = pngWithOptions({ truncateZlib: true });
+  const animated = pngWithOptions({ apng: true });
+  for (const invalid of [
+    badCrc.buffer, badLength.buffer, shortRaw, longRaw, badFilter, noPalette,
+    idatBeforePalette, interlaced, missingIend, trailing, truncatedZlib, animated,
+  ])
+    assert.equal(await uploadedImageInfo(invalid), null);
+
+  const e = env();
+  const form = uploadForm();
+  form.set("file", new File([truncatedZlib], "broken.png", { type: "image/png" }));
+  assert.equal((await worker.fetch(post(form), e)).status, 422);
+  assert.equal(e.GALLERY_BUCKET.items.size, 0);
 });
 
 test("Legacy application pictures are public at /bilder but do not expose other bucket objects", async () => {
@@ -299,6 +502,7 @@ test("Theme variant upload preserves nested variant identity", async () => {
   assert.equal(gallery[0].variant, "maskerad");
 });
 
+/** Send a same-origin JSON mutation request to the Worker. */
 async function jpost(path, body, e, headers = {}) {
   return worker.fetch(
     req(path, {
@@ -402,6 +606,7 @@ test("R2 public link isolation and access protection for navigator", async () =>
   assert.equal((await worker.fetch(req("/api/r2/items?source=legacy"), e)).status, 403);
 });
 
+/** Install an isolated cache mock and return a function that restores globals. */
 function stubEdgeCache() {
   const store = new Map();
   globalThis.caches = {
@@ -504,10 +709,16 @@ test("Deleting a theme removes only that theme and requires its name as confirma
   const res = await jpost("/api/themes/delete", { theme: "neonpanel", confirm: "neonpanel" }, e);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { deleted: 2, theme: "neonpanel" });
-  assert.deepEqual([...e.GALLERY_BUCKET.items.keys()].sort(), [
+  assert.deepEqual([...e.GALLERY_BUCKET.items.keys()].filter((key) => !key.includes("/_system/")).sort(), [
     "gallery/apps/plex/plex-512x512-dddddddd.png",
     "gallery/themes/neonpanel-2/plex/neonpanel-2-plex-512x512-cccccccc.png",
   ]);
+  const lock = await e.GALLERY_BUCKET.get("gallery/_system/theme-locks/neonpanel.json");
+  assert.equal(JSON.parse(await lock.text()).state, "released");
+  assert.equal(
+    (await worker.fetch(post(uploadForm("again.png", 512, 512, "themes", "Plex", "neonpanel")), e)).status,
+    201,
+  );
 });
 
 test("password mode: login page, wrong password, session cookie and logout", async () => {
@@ -534,4 +745,78 @@ test("password mode: login page, wrong password, session cookie and logout", asy
 
   const out = await at("/cdn-cgi/access/logout", { headers: { cookie } });
   assert.match(out.headers.get("set-cookie"), /Max-Age=0/);
+});
+
+test("Password login is persistently rate-limited across the instance", async () => {
+  const e = env();
+  e.AUTH_MODE = "password";
+  e.ADMIN_PASSWORD = "correct horse battery";
+  const login = () => worker.fetch(req("/auth/login", {
+    method: "POST",
+    body: new URLSearchParams({ password: "wrong password" }),
+  }), e);
+  for (let i = 0; i < 8; i++) assert.equal((await login()).status, 401);
+  const limited = await login();
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) > 0);
+});
+
+test("Theme uploads are rejected while a deletion lease is active", async () => {
+  const e = env();
+  const lockKey = "gallery/_system/theme-locks/neonpanel.json";
+  await e.GALLERY_BUCKET.put(lockKey, JSON.stringify({
+    state: "deleting",
+    expires: Date.now() + 60_000,
+  }));
+  const response = await worker.fetch(
+    post(uploadForm("icon.png", 512, 512, "themes", "Plex", "neonpanel")),
+    e,
+  );
+  assert.equal(response.status, 409);
+  assert.equal(e.GALLERY_BUCKET.items.has(lockKey), true);
+});
+
+test("Malformed theme deletion leases fail closed", async () => {
+  const e = env();
+  const lockKey = "gallery/_system/theme-locks/neonpanel.json";
+  for (const value of [
+    JSON.stringify({ state: "deleting" }),
+    JSON.stringify({ state: "unknown", expires: 0 }),
+    "not-json",
+  ]) {
+    await e.GALLERY_BUCKET.put(lockKey, value);
+    const response = await worker.fetch(
+      post(uploadForm("icon.png", 512, 512, "themes", "Plex", "neonpanel")),
+      e,
+    );
+    assert.equal(response.status, 409);
+  }
+});
+
+test("Upload removes a stored object if post-write lease verification fails", async () => {
+  const e = env();
+  const lockKey = "gallery/_system/theme-locks/neonpanel.json";
+  const originalGet = e.GALLERY_BUCKET.get.bind(e.GALLERY_BUCKET);
+  let lockReads = 0;
+  e.GALLERY_BUCKET.get = async (key, options) => {
+    if (key === lockKey && ++lockReads === 2) throw new Error("simulated R2 read failure");
+    return originalGet(key, options);
+  };
+  const response = await worker.fetch(
+    post(uploadForm("icon.png", 512, 512, "themes", "Plex", "neonpanel")),
+    e,
+  );
+  assert.equal(response.status, 503);
+  assert.equal([...e.GALLERY_BUCKET.items.keys()].some((key) => key.endsWith(".png")), false);
+});
+
+test("Password login page has self-contained styling available before authentication", async () => {
+  const e = env();
+  e.AUTH_MODE = "password";
+  e.ADMIN_PASSWORD = "correct horse battery";
+  const response = await worker.fetch(req("/auth/login"), e);
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /<style>/);
+  assert.match(response.headers.get("content-security-policy"), /style-src 'unsafe-inline'/);
 });

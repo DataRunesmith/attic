@@ -2,7 +2,22 @@
 // All private requests are protected using Cloudflare Access JWT verification,
 // or, when AUTH_MODE=password (self-hosted container), a password session.
 const textEncoder = new TextEncoder();
+let certCache = { url: "", expires: 0, keys: [] };
 const pngHeader = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+const pngCrcTable = new Uint32Array(256);
+for (let n = 0; n < 256; n++) {
+  let value = n;
+  for (let bit = 0; bit < 8; bit++)
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  pngCrcTable[n] = value >>> 0;
+}
+/** Compute the PNG CRC-32 used to validate each chunk. */
+function pngCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes)
+    crc = pngCrcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
 const MAX_UPLOAD = 12 * 1024 * 1024;
 const IMAGE_TYPES = {
   png: "image/png",
@@ -13,8 +28,8 @@ const IMAGE_TYPES = {
   avif: "image/avif",
 };
 const PAGE_LIMIT = 500;
-let certCache = { url: "", expires: 0, keys: [] };
 
+/** Serialize an API payload with the standard response headers. */
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -26,6 +41,18 @@ function json(data, status = 200) {
   });
 }
 
+/** Decode a base64url JWT segment into bytes. */
+function base64UrlDecode(input) {
+  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+/** Decode JWT payload bytes as UTF-8 text. */
+function utf8Decode(data) {
+  return new TextDecoder().decode(data);
+}
+
+/** Normalize a user-facing label into a safe path segment. */
 function slug(value) {
   return String(value || "")
     .normalize("NFKD")
@@ -36,19 +63,11 @@ function slug(value) {
     .replace(/^-|-$/g, "")
     .slice(0, 64);
 }
-function base64UrlDecode(input) {
-  const b64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "="));
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
-}
-function utf8Decode(data) {
-  return new TextDecoder().decode(data);
-}
-
 // Password mode: a signed cookie "<expiry>.<hmac>" keyed by ADMIN_PASSWORD, so
 // changing the password logs every session out.
 const SESSION_COOKIE = "attic_session";
 const SESSION_SECONDS = 30 * 24 * 3600;
+/** Sign a password session value with the configured secret. */
 async function sessionMac(password, value) {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -62,6 +81,7 @@ async function sessionMac(password, value) {
     c === "+" ? "-" : c === "/" ? "_" : "",
   );
 }
+/** Read one named cookie without interpreting unrelated values. */
 function cookieValue(request, name) {
   for (const part of (request.headers.get("cookie") || "").split(";")) {
     const [k, ...v] = part.trim().split("=");
@@ -69,6 +89,7 @@ function cookieValue(request, name) {
   }
   return "";
 }
+/** Verify the signed session cookie used by password mode. */
 async function passwordAuthorized(request, env) {
   const password = String(env.ADMIN_PASSWORD || "");
   const [expiry, mac] = cookieValue(request, SESSION_COOKIE).split(".");
@@ -76,25 +97,71 @@ async function passwordAuthorized(request, env) {
   const expected = await sessionMac(password, expiry);
   return expected.length === mac.length && timingSafeEqual(expected, mac);
 }
+/** Compare authentication values without leaking the first differing byte. */
 function timingSafeEqual(a, b) {
   let diff = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i++)
     diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   return diff === 0;
 }
+/** Render the password login page and any fixed error message. */
 function loginPage(message = "") {
-  const body = `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logga in – Attic</title><link rel="stylesheet" href="/styles.css"></head><body><main class="login"><h1>Attic</h1><form method="post" action="/auth/login"><label>Lösenord <input type="password" name="password" autocomplete="current-password" required autofocus></label><button type="submit">Logga in</button></form>${message ? `<p role="alert">${message}</p>` : ""}</main></body></html>`;
+  const body = `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Logga in – Attic</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#101318;color:#f4f5f7;font:16px system-ui,sans-serif}.login{width:min(24rem,calc(100% - 3rem));padding:2rem;background:#1b2028;border:1px solid #39414e;border-radius:1rem}h1{margin-top:0}label{display:grid;gap:.5rem}input,button{box-sizing:border-box;width:100%;margin-top:.75rem;padding:.8rem;border-radius:.5rem;font:inherit}input{background:#101318;color:inherit;border:1px solid #596273}button{background:#3976d2;color:white;border:0;font-weight:600;cursor:pointer}p[role=alert]{color:#ff9c9c}</style></head><body><main class="login"><h1>Attic</h1><form method="post" action="/auth/login"><label>Lösenord <input type="password" name="password" autocomplete="current-password" required autofocus></label><button type="submit">Logga in</button></form>${message ? `<p role="alert">${message}</p>` : ""}</main></body></html>`;
   return new Response(body, {
     status: message ? 401 : 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       "content-security-policy":
-        "default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+        "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
     },
   });
 }
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 8;
+
+/** Atomically consume one slot from the shared password-login rate window. */
+async function consumeLoginAttempt(bucket) {
+  const key = "gallery/_system/login-rate-limit/global.json";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const current = await bucket.get(key);
+    let state = { windowStart: Date.now(), attempts: 0 };
+    if (current) {
+      try {
+        state = JSON.parse(await current.text());
+      } catch {
+        // Corrupt limiter state must not reset the protection.
+        return { allowed: false, retryAfter: Math.ceil(LOGIN_WINDOW_MS / 1000) };
+      }
+      if (!Number.isSafeInteger(state.windowStart) || !Number.isSafeInteger(state.attempts) || state.attempts < 0)
+        return { allowed: false, retryAfter: Math.ceil(LOGIN_WINDOW_MS / 1000) };
+      if (Date.now() - state.windowStart >= LOGIN_WINDOW_MS)
+        state = { windowStart: Date.now(), attempts: 0 };
+    }
+    const retryAfter = Math.max(1, Math.ceil((state.windowStart + LOGIN_WINDOW_MS - Date.now()) / 1000));
+    if (state.attempts >= LOGIN_MAX_ATTEMPTS)
+      return { allowed: false, retryAfter };
+    const next = await bucket.put(key, JSON.stringify({
+      windowStart: state.windowStart,
+      attempts: state.attempts + 1,
+    }), current
+      ? { onlyIf: { etagMatches: current.etag } }
+      : { onlyIf: { etagDoesNotMatch: "*" } });
+    if (next) return { allowed: true, key, etag: next.etag };
+  }
+  return { allowed: false, retryAfter: Math.ceil(LOGIN_WINDOW_MS / 1000) };
+}
+
+/** Reset throttling only if the successful login still owns the stored version. */
+async function resetLoginAttempts(bucket, attempt) {
+  if (!attempt?.key || !attempt.etag) return;
+  await bucket.put(attempt.key, JSON.stringify({ windowStart: Date.now(), attempts: 0 }), {
+    onlyIf: { etagMatches: attempt.etag },
+  });
+}
+
+/** Handle password login/logout routes and enforce persistent login throttling. */
 async function passwordAuthRoute(request, env, url) {
   const secure = url.protocol === "https:" ? "; Secure" : "";
   if (url.pathname === "/auth/login" && request.method === "GET") return loginPage();
@@ -102,12 +169,27 @@ async function passwordAuthRoute(request, env, url) {
     const form = await request.formData().catch(() => null);
     const given = String(form?.get("password") || "");
     const password = String(env.ADMIN_PASSWORD || "");
+    const bucket = env.GALLERY_BUCKET;
+    if (!bucket) return json({ error: "Inloggningen är tillfälligt otillgänglig." }, 503);
+    let attempt;
+    try {
+      attempt = await consumeLoginAttempt(bucket);
+    } catch {
+      return json({ error: "Inloggningen är tillfälligt otillgänglig." }, 503);
+    }
+    if (!attempt.allowed) {
+      const limited = loginPage("För många inloggningsförsök. Försök igen senare.");
+      const headers = new Headers(limited.headers);
+      headers.set("retry-after", String(attempt.retryAfter));
+      return new Response(limited.body, { status: 429, headers });
+    }
     if (password.length < 8 || !timingSafeEqual(given, password)) {
       await new Promise((resolve) => setTimeout(resolve, 800));
       return loginPage(
         password.length < 8 ? "ADMIN_PASSWORD saknas eller är för kort." : "Fel lösenord.",
       );
     }
+    await resetLoginAttempts(bucket, attempt).catch(() => {});
     const expiry = String(Math.floor(Date.now() / 1000) + SESSION_SECONDS);
     const cookie = `${SESSION_COOKIE}=${expiry}.${await sessionMac(password, expiry)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_SECONDS}${secure}`;
     return new Response(null, { status: 303, headers: { location: "/", "set-cookie": cookie } });
@@ -123,14 +205,27 @@ async function passwordAuthRoute(request, env, url) {
   return null;
 }
 
-async function accessAuthorized(request, env) {
+/** Authorize local development, native Workers Access, or explicit container JWT mode. */
+async function accessAuthorized(ctx, env, request) {
+  const hostname = new URL(request.url).hostname;
+  if (env.LOCAL_DEV === "true" && (hostname === "localhost" || hostname === "127.0.0.1"))
+    return true;
+  // Native Workers Access is preferred in Cloudflare. The JWT fallback is retained
+  // only for the standalone Docker/container deployment mode.
+  if (ctx?.access) return true;
+  if (env.AUTH_MODE === "cloudflare-access") return legacyAccessAuthorized(request, env);
+  return false;
+}
+
+/** Validate the standalone container's Access JWT against cached JWKS keys. */
+async function legacyAccessAuthorized(request, env) {
   const hostname = new URL(request.url).hostname;
   // Local development only. Never enable LOCAL_DEV in production config.
   if (env.LOCAL_DEV === "true" && (hostname === "localhost" || hostname === "127.0.0.1"))
     return true;
   const aud = String(env.CF_ACCESS_AUD || "");
   const team = String(env.CF_ACCESS_TEAM_DOMAIN || "");
-  // An unrendered __NAME__ placeholder is never a valid value.
+  // An unrendered configuration placeholder is never a valid value.
   if (!aud || /^__.*__$/.test(aud) || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(team))
     return false;
   const token = request.headers.get("cf-access-jwt-assertion");
@@ -145,8 +240,8 @@ async function accessAuthorized(request, env) {
       header.alg !== "RS256" ||
       typeof header.kid !== "string" ||
       payload.iss !== `https://${team}` ||
-      payload.exp <= now ||
-      (payload.nbf !== undefined && payload.nbf > now) ||
+      !Number.isSafeInteger(payload.exp) || payload.exp <= now ||
+      (payload.nbf !== undefined && (!Number.isSafeInteger(payload.nbf) || payload.nbf > now)) ||
       !(Array.isArray(payload.aud) ? payload.aud.includes(aud) : payload.aud === aud)
     )
       return false;
@@ -178,6 +273,18 @@ async function accessAuthorized(request, env) {
   }
 }
 
+/** Return the validated public image origin used by gallery URLs. */
+function publicAssetOrigin(env) {
+  const raw = String(env.PUBLIC_ORIGIN || "");
+  let url;
+  try { url = new URL(raw); } catch { return ""; }
+  if (!["http:", "https:"].includes(url.protocol) || !url.hostname ||
+      url.username || url.password || url.pathname !== "/" || url.search || url.hash)
+    return "";
+  return url.origin + "/bilder";
+}
+
+/** Convert an allowed R2 image object into its public URL representation. */
 function keyToImage(object, prefix, publicOrigin) {
   const key = object.key;
   if (!key.startsWith(prefix)) return null;
@@ -210,17 +317,102 @@ function keyToImage(object, prefix, publicOrigin) {
   };
 }
 
-function uploadedImageInfo(buffer) {
-  if (buffer.byteLength < 33) return null;
+// Validate PNG framing and the complete zlib image stream, not just IHDR.
+// Interlaced PNGs are deliberately rejected; all supported exports are non-interlaced.
+/** Validate PNG chunk framing, CRCs and the complete decompressed image stream. */
+async function uploadedImageInfo(buffer) {
+  if (buffer.byteLength < 57) return null;
   const bytes = new Uint8Array(buffer);
   if (!pngHeader.every((v, i) => bytes[i] === v)) return null;
-  const d = new DataView(buffer);
-  if (d.getUint32(8) !== 13 || utf8Decode(bytes.subarray(12, 16)) !== "IHDR") return null;
-  const width = d.getUint32(16),
-    height = d.getUint32(20);
-  if (!([512, 1254].includes(width) && width === height)) return null;
-  if (![0, 2, 3, 4, 6].includes(bytes[25])) return null;
-  return { width, height };
+  const view = new DataView(buffer);
+  let offset = 8;
+  let width = 0, height = 0, bitDepth = 0, colorType = 0;
+  let header = false, palette = false, idat = false, idatEnded = false, ended = false;
+  const imageData = [];
+  while (offset + 12 <= bytes.length) {
+    const length = view.getUint32(offset);
+    if (length > bytes.length - offset - 12) return null;
+    const type = utf8Decode(bytes.subarray(offset + 4, offset + 8));
+    const start = offset + 8;
+    const end = start + length;
+    const next = end + 4;
+    if (view.getUint32(end) !== pngCrc32(bytes.subarray(offset + 4, end))) return null;
+    if (!header && type !== "IHDR") return null;
+    if (type === "IHDR") {
+      if (header || offset !== 8 || length !== 13) return null;
+      width = view.getUint32(start);
+      height = view.getUint32(start + 4);
+      bitDepth = bytes[start + 8];
+      colorType = bytes[start + 9];
+      if (![512, 1254].includes(width) || width !== height) return null;
+      if (bytes[start + 10] !== 0 || bytes[start + 11] !== 0 || bytes[start + 12] !== 0)
+        return null;
+      const validDepth = {
+        0: [1, 2, 4, 8, 16],
+        2: [8, 16],
+        3: [1, 2, 4, 8],
+        4: [8, 16],
+        6: [8, 16],
+      };
+      if (!validDepth[colorType]?.includes(bitDepth)) return null;
+      header = true;
+    } else if (type === "PLTE") {
+      if (palette || idat || !length || length > 768 || length % 3 !== 0 ||
+          colorType === 0 || colorType === 4) return null;
+      palette = true;
+    } else if (type === "IDAT") {
+      if (idatEnded || (colorType === 3 && !palette)) return null;
+      idat = true;
+      imageData.push(bytes.subarray(start, end));
+    } else if (type === "IEND") {
+      if (length !== 0 || !idat || next !== bytes.length) return null;
+      ended = true;
+      offset = next;
+      break;
+    } else {
+      if (["acTL", "fcTL", "fdAT"].includes(type)) return null;
+      if (idat) idatEnded = true;
+      // Unknown critical chunks cannot be safely interpreted.
+      if (type.charCodeAt(0) >= 65 && type.charCodeAt(0) <= 90 &&
+          !["tRNS"].includes(type)) return null;
+    }
+    if (idat && type !== "IDAT") idatEnded = true;
+    offset = next;
+  }
+  if (!ended || offset !== bytes.length || !imageData.length) return null;
+
+  const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
+  const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
+  const rowStride = rowBytes + 1;
+  const expected = rowStride * height;
+  let total = 0;
+  let reader;
+  try {
+    const stream = new Blob(imageData).stream().pipeThrough(new DecompressionStream("deflate"));
+    reader = stream.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      // Inspect only the filter byte at the start of each decompressed row.
+      for (let i = (rowStride - (total % rowStride)) % rowStride;
+        i < value.length; i += rowStride) {
+        if (value[i] > 4) {
+          await reader.cancel();
+          return null;
+        }
+      }
+      total += value.length;
+      if (total > expected) {
+        await reader.cancel();
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    reader?.releaseLock();
+  }
+  return total === expected ? { width, height } : null;
 }
 
 const LEGACY_IMAGE_KEY = /^(?:apps|uploads)\/[a-zA-Z0-9/_-]+\.(?:png|webp|jpe?g|gif|avif)$/;
@@ -228,6 +420,7 @@ const IMPORTED_IMAGE_KEY =
   /^imported\/(?:apps|uploads)\/[a-zA-Z0-9/_-]+\.(?:png|webp|jpe?g|gif|avif)$/;
 const MAX_LEGACY_BYTES = 16 * 1024 * 1024;
 // Read only the image header. No pixels are decoded and no object is changed.
+/** Read image dimensions from a bounded PNG or JPEG header. */
 function r2HeaderDimensions(b, ext) {
   const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
   const be = (i) => (i + 4 <= b.length ? dv.getUint32(i, false) : 0);
@@ -319,9 +512,11 @@ function r2HeaderDimensions(b, ext) {
     return null;
   return { width: w, height: h, dimensions: `${w}x${h}` };
 }
+/** Return the minimum byte range needed to identify image dimensions. */
 function r2HeaderBytes(ext) {
   return ext === "jpeg" || ext === "jpg" || ext === "avif" ? 65536 : 64;
 }
+/** Parse cached dimension metadata when it is structurally valid. */
 function r2MetadataDimensions(meta) {
   const w = Number(meta?.width),
     h = Number(meta?.height);
@@ -338,6 +533,7 @@ function r2MetadataDimensions(meta) {
 // write time, otherwise from the edge cache, and only then from an R2 range read.
 // Cache lookups are free, so repeat scans cost no R2 reads for known objects.
 const DIMENSION_CACHE_ORIGIN = "https://dimension-cache.attic.invalid/";
+/** Fetch only the image header range and derive its dimensions. */
 async function r2ScanImage(bucket, source, object) {
   const fromMetadata = r2MetadataDimensions(object.customMetadata);
   if (fromMetadata) return fromMetadata;
@@ -377,6 +573,7 @@ async function r2ScanImage(bucket, source, object) {
   return dimensions;
 }
 
+/** Validate and normalize a requested R2 source selection. */
 function r2Selection(query) {
   if (query === "legacy")
     return { name: "legacy", binding: "LEGACY_BUCKET", prefix: "", keyPattern: LEGACY_IMAGE_KEY };
@@ -389,6 +586,7 @@ function r2Selection(query) {
     };
   return null;
 }
+/** Enforce the source-specific allowlist for R2 object keys. */
 function r2KeyAllowed(bucket, key) {
   return (
     typeof key === "string" &&
@@ -398,6 +596,7 @@ function r2KeyAllowed(bucket, key) {
     !key.includes("..")
   );
 }
+/** Handle authenticated R2 listing, preview, import, and deletion routes. */
 async function r2Api(request, env, url) {
   const selection = r2Selection(url.searchParams.get("source"));
   const isList = url.pathname === "/api/r2/items" && request.method === "GET";
@@ -514,7 +713,7 @@ async function r2Api(request, env, url) {
       await env.GALLERY_BUCKET.put(destinationKey, bytes, {
         httpMetadata: { contentType: original.httpMetadata?.contentType || "image/png" },
         customMetadata: {
-          copiedFrom: "__LEGACY_BUCKET__",
+          copiedFrom: env.LEGACY_BUCKET_NAME || "legacy",
           originalKey: key,
           ...(dimensions
             ? { width: String(dimensions.width), height: String(dimensions.height) }
@@ -539,6 +738,7 @@ async function r2Api(request, env, url) {
   }
 }
 
+/** Reject mutation requests that do not originate from the configured site. */
 function sameOriginRequest(request) {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
@@ -548,6 +748,7 @@ function sameOriginRequest(request) {
 
 // "Använd i App Launcher": sets a theme's icons as the logos of the Cloudflare
 // Access apps, through the API with WORKERS_API_TOKEN (Access: Apps: Edit).
+/** Call the configured Cloudflare API with bounded request timeouts. */
 async function themeCF(env, method, path, body) {
   const token =
       typeof env.WORKERS_API_TOKEN === "string"
@@ -575,6 +776,7 @@ async function themeCF(env, method, path, body) {
     clearTimeout(timer);
   }
 }
+/** Load the supported application catalogue for theme planning. */
 async function themeApps(env) {
   const all = [];
   for (let i = 1; i <= 20; i++) {
@@ -587,6 +789,7 @@ async function themeApps(env) {
     (a) => ["self_hosted", "saas", "bookmark"].includes(a.type) && a.app_launcher_visible !== false,
   );
 }
+/** Build the requested theme image plan from application metadata. */
 async function themePlan(env, theme, size) {
   let cursor;
   const icons = [];
@@ -597,7 +800,7 @@ async function themePlan(env, theme, size) {
       limit: 500,
     });
     for (const o of listing.objects) {
-      const img = keyToImage(o, "gallery/", "__PUBLIC_ORIGIN__/bilder");
+      const img = keyToImage(o, "gallery/", publicAssetOrigin(env));
       if (img && img.theme === theme && img.dimensions === size) icons.push(img);
     }
     if (!listing.truncated) break;
@@ -630,6 +833,7 @@ async function themePlan(env, theme, size) {
     };
   });
 }
+/** Construct the upstream image request for one supported application. */
 function themeRequest(app, url) {
   const whitelist = [
     "type",
@@ -683,6 +887,7 @@ function themeRequest(app, url) {
   if (!p.type || !p.name) throw Error("Ofullständig app.");
   return p;
 }
+/** Handle theme previews, downloads, and application-specific operations. */
 async function themeHandler(request, env, url) {
   if (request.method !== "POST") return json({ error: "Metoden stöds inte." }, 405);
   if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
@@ -758,6 +963,7 @@ async function themeHandler(request, env, url) {
   }
 }
 
+/** Parse a bounded JSON mutation body and reject malformed input. */
 async function readMutationJson(request) {
   if (!sameOriginRequest(request)) return { error: json({ error: "Otillåten förfrågan." }, 403) };
   if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json")
@@ -773,6 +979,7 @@ async function readMutationJson(request) {
 
 // Delete catalogued images by key. Only keys that parse as gallery images are
 // accepted, so nothing outside the catalogue can be removed through this route.
+/** Delete validated gallery keys and report partial progress explicitly. */
 async function galleryDelete(request, bucket, prefix, origin) {
   const { data, error } = await readMutationJson(request);
   if (error) return error;
@@ -793,7 +1000,65 @@ async function galleryDelete(request, bucket, prefix, origin) {
   }
 }
 
-// Delete every object under one theme folder.
+// A short-lived R2 lease serializes theme uploads and deletion without another service.
+const THEME_LOCK_LEASE_MS = 10 * 60 * 1000;
+/** Derive the internal R2 lease key for one normalized theme. */
+function themeLockKey(prefix, theme) {
+  return `${prefix}_system/theme-locks/${theme}.json`;
+}
+/** Read a theme lease and fail closed when its persisted state is malformed. */
+async function readThemeLock(bucket, key) {
+  const object = await bucket.get(key);
+  if (!object) return { etag: null, active: false };
+  try {
+    const state = JSON.parse(await object.text());
+    const validLease = state?.state === "deleting" &&
+      Number.isSafeInteger(state.expires) && state.expires > 0;
+    const validRelease = state?.state === "released" && state.expires === 0;
+    if (!validLease && !validRelease)
+      return { etag: object.etag, active: true };
+    return { etag: object.etag, active: validLease && state.expires > Date.now() };
+  } catch {
+    // An unreadable lock must fail closed rather than permit writes during deletion.
+    return { etag: object.etag, active: true };
+  }
+}
+/** Acquire or replace an expired lease with an R2 compare-and-swap write. */
+async function acquireThemeLock(bucket, key) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const current = await readThemeLock(bucket, key);
+    if (current.active) return null;
+    const state = JSON.stringify({
+      state: "deleting",
+      expires: Date.now() + THEME_LOCK_LEASE_MS,
+      token: crypto.randomUUID(),
+    });
+    const options = current.etag
+      ? { onlyIf: { etagMatches: current.etag } }
+      : { onlyIf: { etagDoesNotMatch: "*" } };
+    const lock = await bucket.put(key, state, options);
+    if (lock) return { key, etag: lock.etag };
+  }
+  return null;
+}
+/** Extend a lease only while its etag still belongs to this deletion. */
+async function renewThemeLock(bucket, lock) {
+  const next = await bucket.put(lock.key, JSON.stringify({
+    state: "deleting",
+    expires: Date.now() + THEME_LOCK_LEASE_MS,
+  }), { onlyIf: { etagMatches: lock.etag } });
+  if (!next) throw new Error("Theme deletion lease was lost.");
+  lock.etag = next.etag;
+}
+/** Mark a lease released without overwriting a newer lease owner. */
+async function releaseThemeLock(bucket, lock) {
+  await bucket.put(lock.key, JSON.stringify({ state: "released", expires: 0 }), {
+    onlyIf: { etagMatches: lock.etag },
+  });
+}
+
+// Delete every object under one theme folder while blocking racing uploads.
+/** Delete a theme in bounded batches while coordinating concurrent uploads. */
 async function themeDelete(request, bucket, prefix) {
   const { data, error } = await readMutationJson(request);
   if (error) return error;
@@ -801,27 +1066,55 @@ async function themeDelete(request, bucket, prefix) {
   if (!theme || theme.length > 48 || slug(theme) !== theme)
     return json({ error: "Ogiltigt tema." }, 400);
   if (data?.confirm !== theme) return json({ error: "Bekräftelse saknas." }, 400);
+
+  let lock;
+  try {
+    lock = await acquireThemeLock(bucket, themeLockKey(prefix, theme));
+  } catch {
+    return json({ error: "Temat kunde inte låsas för radering." }, 503);
+  }
+  if (!lock) return json({ error: "Temat raderas redan. Försök igen strax." }, 409);
   try {
     let deleted = 0;
+    let complete = false;
     for (let page = 0; page < 50; page++) {
+      await renewThemeLock(bucket, lock);
       const listing = await bucket.list({ prefix: `${prefix}themes/${theme}/`, limit: 1000 });
-      if (!listing.objects.length) break;
-      await bucket.delete(listing.objects.map((o) => o.key));
-      deleted += listing.objects.length;
-      if (!listing.truncated) break;
+      const keys = listing.objects.map((object) => object.key).filter((key) => key !== lock.key);
+      if (!keys.length && !listing.truncated) {
+        complete = true;
+        break;
+      }
+      if (keys.length) {
+        await bucket.delete(keys);
+        deleted += keys.length;
+      }
+    }
+    if (!complete) {
+      await renewThemeLock(bucket, lock);
+      const remaining = await bucket.list({ prefix: `${prefix}themes/${theme}/`, limit: 1000 });
+      if (remaining.truncated || remaining.objects.some((object) => object.key !== lock.key))
+        return json({
+          error: "Temat innehåller fler filer än en radering kan hantera åt gången.",
+          deleted,
+          theme,
+        }, 503);
     }
     return json({ deleted, theme });
   } catch {
     return json({ error: "Temat kunde inte raderas." }, 503);
+  } finally {
+    await releaseThemeLock(bucket, lock).catch(() => {});
   }
 }
 
+/** Dispatch authenticated API routes and enforce the configured storage bindings. */
 async function handleApi(request, env, url) {
   const bucket = env.GALLERY_BUCKET;
   if (!bucket) return json({ error: "Bildlagringen är inte konfigurerad." }, 503);
   const prefix = String(env.GALLERY_PREFIX || "gallery/");
-  const origin = String(env.PUBLIC_ASSET_ORIGIN || "__PUBLIC_ORIGIN__/bilder");
-  if (prefix !== "gallery/" || origin !== "__PUBLIC_ORIGIN__/bilder")
+  const origin = publicAssetOrigin(env);
+  if (prefix !== "gallery/" || !origin)
     return json({ error: "Ogiltig lagringskonfiguration." }, 503);
 
   if (url.pathname.startsWith("/api/theme/")) return themeHandler(request, env, url);
@@ -881,7 +1174,7 @@ async function handleApi(request, env, url) {
     if (!file.name.toLowerCase().endsWith(".png") || file.type !== "image/png")
       return json({ error: "Endast PNG tillåts." }, 415);
     const buffer = await file.arrayBuffer();
-    const dimensions = uploadedImageInfo(buffer);
+    const dimensions = await uploadedImageInfo(buffer);
     if (!dimensions)
       return json({ error: "Bilden måste vara en PNG i 512×512 eller 1254×1254 pixlar." }, 422);
     const folder =
@@ -890,7 +1183,15 @@ async function handleApi(request, env, url) {
         : `themes/${theme}/${app}${variant ? `/variants/${variant}` : ""}`;
     const name = `${theme ? theme + "-" : ""}${app}${variant ? "-" + variant : ""}-${dimensions.width}x${dimensions.height}-${crypto.randomUUID().slice(0, 8)}.png`;
     const key = `${prefix}${folder}/${name}`;
+    const lockKey = category === "themes" ? themeLockKey(prefix, theme) : null;
+    let lockSnapshot;
+    let stored = false;
     try {
+      if (lockKey) {
+        lockSnapshot = await readThemeLock(bucket, lockKey);
+        if (lockSnapshot.active)
+          return json({ error: "Temat håller på att raderas. Försök igen strax." }, 409);
+      }
       await bucket.put(key, buffer, {
         httpMetadata: { contentType: "image/png", cacheControl: "public, max-age=86400" },
         customMetadata: {
@@ -901,9 +1202,20 @@ async function handleApi(request, env, url) {
           height: String(dimensions.height),
         },
       });
+      stored = true;
+      // If a deletion began while this upload was in flight, remove the just-written object.
+      if (lockKey) {
+        const after = await readThemeLock(bucket, lockKey);
+        if (after.active || after.etag !== lockSnapshot.etag) {
+          await bucket.delete(key);
+          stored = false;
+          return json({ error: "Temat håller på att raderas. Försök igen strax." }, 409);
+        }
+      }
       const uploaded = { key, size: buffer.byteLength, uploaded: new Date() };
       return json({ image: keyToImage(uploaded, prefix, origin) }, 201);
     } catch {
+      if (stored) await bucket.delete(key).catch(() => {});
       return json({ error: "Kunde inte spara bilden." }, 503);
     }
   }
@@ -912,6 +1224,7 @@ async function handleApi(request, env, url) {
 
 // Only these three R2 prefixes are readable without signing in.
 // The private /api/* and portal routes never pass through this public handler.
+/** Serve only approved public image keys with safe cache headers. */
 async function servePublicImage(request, env, url) {
   if (!["GET", "HEAD"].includes(request.method))
     return new Response("Metod stöds inte.", { status: 405, headers: { allow: "GET, HEAD" } });
@@ -959,7 +1272,8 @@ async function servePublicImage(request, env, url) {
 }
 
 export default {
-  async fetch(request, env) {
+  /** Route public images, authentication, private APIs, and static assets. */
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/bilder/")) return servePublicImage(request, env, url);
     if (env.AUTH_MODE === "password") {
@@ -969,7 +1283,7 @@ export default {
         return url.pathname.startsWith("/api/")
           ? json({ error: "Inloggning krävs." }, 401)
           : new Response(null, { status: 303, headers: { location: "/auth/login" } });
-    } else if (!(await accessAuthorized(request, env)))
+    } else if (!(await accessAuthorized(ctx, env, request)))
       return new Response("Åtkomst nekad. Cloudflare Access krävs.", {
         status: 403,
         headers: { "cache-control": "no-store", "content-type": "text/plain; charset=utf-8" },

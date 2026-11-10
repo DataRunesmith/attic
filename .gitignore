@@ -377,3 +377,9 @@ site/
 site-docs/
 .wrangler/
 dist/
+
+# Local Cloudflare deployment configuration and generated build
+.cloudflare.env
+.cloudflare.env.*
+!.cloudflare.env.example
+.cloudflare-build/

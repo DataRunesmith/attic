@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.js && node --check public/app.js && node --check public/zip-import.js && node --check public/zip-ui.js && node --check public/r2-ui.js && node --check public/theme-ui.js && node --check public/theme-library.js",
-    "dev": "wrangler dev --local",
-    "deploy": "wrangler deploy"
+    "check": "node --check src/index.js && node --check public/app.js && node --check public/zip-import.js && node --check public/zip-ui.js && node --check public/r2-ui.js && node --check public/theme-ui.js && node --check public/theme-library.js && node --check build.mjs && node --check tools/dev.mjs && node --check tools/env.mjs && node --check tools/render.mjs && node --check tools/cloudflare-build.mjs && node --check tools/configure-cloudflare-build.mjs && node --check tests/env.test.js && node --check tests/build.test.js && node --check tests/render.test.js && node --check tests/worker.test.js && node --check tests/zip-import.test.js",
+    "dev": "node tools/dev.mjs",
+    "deploy": "npm run build:cloudflare && wrangler deploy --config .cloudflare-build/wrangler.jsonc",
+    "build:cloudflare": "node tools/cloudflare-build.mjs",
+    "cloudflare:configure": "node tools/configure-cloudflare-build.mjs"
   },
   "devDependencies": {
-    "wrangler": "^4.157.0"
+    "wrangler": "4.159.0"
   }
 }
