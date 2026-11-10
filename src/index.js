@@ -121,9 +121,16 @@ function loginPage(message = "") {
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 8;
 
-/** Atomically consume one slot from the shared password-login rate window. */
-async function consumeLoginAttempt(bucket) {
-  const key = "gallery/_system/login-rate-limit/global.json";
+/** Hash the Cloudflare-provided client address so limiter keys do not expose IP data. */
+async function loginRateLimitKey(request) {
+  const address = request.headers.get("cf-connecting-ip") || "unknown-client";
+  const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(address));
+  const fingerprint = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return "gallery/_system/login-rate-limit/" + fingerprint + ".json";
+}
+
+/** Atomically consume one slot from this client's persistent password-login window. */
+async function consumeLoginAttempt(bucket, key) {
   for (let attempt = 0; attempt < 5; attempt++) {
     const current = await bucket.get(key);
     let state = { windowStart: Date.now(), attempts: 0 };
@@ -173,7 +180,7 @@ async function passwordAuthRoute(request, env, url) {
     if (!bucket) return json({ error: "Inloggningen är tillfälligt otillgänglig." }, 503);
     let attempt;
     try {
-      attempt = await consumeLoginAttempt(bucket);
+      attempt = await consumeLoginAttempt(bucket, await loginRateLimitKey(request));
     } catch {
       return json({ error: "Inloggningen är tillfälligt otillgänglig." }, 503);
     }
@@ -210,9 +217,16 @@ async function accessAuthorized(ctx, env, request) {
   const hostname = new URL(request.url).hostname;
   if (env.LOCAL_DEV === "true" && (hostname === "localhost" || hostname === "127.0.0.1"))
     return true;
-  // Native Workers Access is preferred in Cloudflare. The JWT fallback is retained
-  // only for the standalone Docker/container deployment mode.
-  if (ctx?.access) return true;
+  // Native Workers Access is preferred in Cloudflare. If an expected audience
+  // is explicitly configured, bind the trusted context to that audience as well.
+  if (ctx?.access) {
+    const expectedAudience = String(env.CF_ACCESS_AUD || "");
+    if (!expectedAudience) return true;
+    const actualAudience = ctx.access.aud;
+    return Array.isArray(actualAudience)
+      ? actualAudience.includes(expectedAudience)
+      : actualAudience === expectedAudience;
+  }
   if (env.AUTH_MODE === "cloudflare-access") return legacyAccessAuthorized(request, env);
   return false;
 }
