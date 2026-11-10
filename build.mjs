@@ -5,6 +5,7 @@ import {
 } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
+import { isValidAccountId, isValidBucketName, isValidHostname } from "./build-values.mjs";
 
 const publicRoot = resolve("public");
 if (!lstatSync(publicRoot).isDirectory() || lstatSync(publicRoot).isSymbolicLink())
@@ -70,12 +71,9 @@ const publicHost = config.routes?.find((route) => route.custom_domain === true)?
 const accountId = config.account_id;
 const galleryBucket = config.r2_buckets?.find((binding) => binding.binding === "GALLERY_BUCKET")?.bucket_name;
 const legacyBucket = config.r2_buckets?.find((binding) => binding.binding === "LEGACY_BUCKET")?.bucket_name;
-const hostLabels = typeof publicHost === "string" ? publicHost.split(".") : [];
-const bucketPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/;
-if (hostLabels.length < 2 || publicHost.length > 253 ||
-    hostLabels.some((label) => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)) ||
-    !/^[a-f0-9]{32}$/i.test(accountId || "") ||
-    !bucketPattern.test(galleryBucket || "") || !bucketPattern.test(legacyBucket || ""))
+if (!isValidHostname(publicHost) || !isValidAccountId(accountId) ||
+    !isValidBucketName(galleryBucket) || !isValidBucketName(legacyBucket) ||
+    galleryBucket === legacyBucket)
   throw new Error("Rendered Wrangler configuration has an invalid domain, account ID, or R2 bucket.");
 
 const sourceRoot = resolve("src");
