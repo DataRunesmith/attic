@@ -59,9 +59,9 @@ npm run check
 npm run dev
 ```
 
-`npm run dev` performs the initial staged build, starts Wrangler, watches `src/`, `public/`, `tools/`, `build.mjs`, `wrangler.jsonc`, and `.cloudflare.env`, then rebuilds and restarts Wrangler after relevant changes. If a rebuild fails, the last successfully rendered output remains intact.
+`npm run dev` performs the initial staged build, starts Wrangler, watches `src/`, `public/`, `tools/`, `build.mjs`, `wrangler.jsonc`, and `.cloudflare.env`, then rebuilds and restarts Wrangler after relevant changes, including changes to `.dev.vars`. The dev runner copies `.dev.vars` byte-for-byte beside the generated Wrangler config (and removes that private copy on shutdown), preserving Wrangler dotenv parsing. If `.dev.vars` does not define `LOCAL_DEV`, local development defaults it to `true`; set `LOCAL_DEV=false` in `.dev.vars` or the process environment to disable the local bypass. If a rebuild fails, the last successfully rendered output remains intact.
 
-For self-hosted container operation, see `docker/entrypoint.sh`. `PUBLIC_URL` must be an HTTP(S) origin without credentials, path, query, or fragment. Container settings are persisted under `/data`. Password login is rate-limited globally using atomic conditional writes in the gallery R2 bucket (8 attempts per 15 minutes across the instance). A single shared limiter avoids spoofable client-IP headers and unbounded per-IP records. Its internal record lives under `gallery/_system/` and is not a public image path.
+For self-hosted container operation, see `docker/entrypoint.sh`. `PUBLIC_URL` must be an HTTP(S) origin without credentials, path, query, or fragment. Container settings are persisted under `/data`. Password login is rate-limited per client using a SHA-256 fingerprint of Cloudflare’s `cf-connecting-ip` header and atomic conditional writes in the gallery R2 bucket (8 attempts per 15 minutes per client). Raw IP addresses are not stored in limiter keys. Its internal records live under `gallery/_system/` and are not public image paths.
 
 The container's optional `AUTH_MODE=cloudflare-access` still uses its standalone JWT/JWKS validation and therefore requires `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`; this is separate from the Cloudflare Workers deployment.
 
