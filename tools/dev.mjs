@@ -146,7 +146,10 @@ async function rebuild() {
   if (successful && !shuttingDown) {
     try {
       await stopWrangler();
-      if (!shuttingDown) {\n    prepareDevVars();\n    await startWrangler();\n  }
+      if (!shuttingDown) {
+        prepareDevVars();
+        await startWrangler();
+      }
     } catch (error) {
       console.error("Could not restart Wrangler:", error);
     }
@@ -194,6 +197,7 @@ async function shutdown() {
   clearTimeout(debounceTimer);
   for (const watcher of watchers) watcher.close();
   await stopWrangler();
+  cleanupDevVars();
 }
 
 process.once("SIGINT", () => { void shutdown(); });
@@ -210,7 +214,10 @@ try {
     await build();
   } while (pending && !shuttingDown);
   building = false;
-  if (!shuttingDown) {\n    prepareDevVars();\n    await startWrangler();\n  }
+  if (!shuttingDown) {
+    prepareDevVars();
+    await startWrangler();
+  }
   console.log("Watching src/, public/, tools/, build.mjs, wrangler.jsonc, and .cloudflare.env.");
 } catch (error) {
   await shutdown();
