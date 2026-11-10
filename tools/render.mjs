@@ -221,14 +221,25 @@ try {
         if (fstatSync(fd).size > 5_000_000) continue;
         let text = readFileSync(fd, "utf8");
         const before = text;
+        const extension = extname(entry.name).toLowerCase();
+        for (const name of declared) {
+          const token = "__" + name + "__";
+          if (!text.includes(token)) continue;
+          const value = String(values.get(name));
+          const escaped = [".js", ".mjs", ".cjs", ".ts", ".json", ".jsonc", ".webmanifest"]
+            .includes(extension)
+            ? JSON.stringify(value).slice(1, -1)
+            : [".html", ".svg", ".xml"].includes(extension)
+              ? value.replace(/[&<>"']/g, (character) => ({
+                  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+                })[character])
+              : value;
+          text = text.split(token).join(escaped);
+        }
+        const unresolved = text.match(/__[A-Z][A-Z0-9_]*__/g);
+        if (unresolved)
+          throw new Error(path + " contains unresolved placeholders: " + [...new Set(unresolved)].join(", "));
         if (entry.name === "wrangler.jsonc") {
-          for (const name of declared) {
-            const escaped = JSON.stringify(values.get(name)).slice(1, -1);
-            text = text.split("__" + name + "__").join(escaped);
-          }
-          const unresolved = text.match(/__[A-Z][A-Z0-9_]*__/g);
-          if (unresolved)
-            throw new Error("wrangler.jsonc contains undeclared placeholders: " + [...new Set(unresolved)].join(", "));
           const config = JSON.parse(text);
           if (Array.isArray(config.routes))
             config.routes = config.routes.filter((route) => route.pattern);
