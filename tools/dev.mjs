@@ -210,7 +210,7 @@ try {
     await build();
   } while (pending && !shuttingDown);
   building = false;
-  if (!shuttingDown) await startWrangler();
+  if (!shuttingDown) {\n    prepareDevVars();\n    await startWrangler();\n  }
   console.log("Watching src/, public/, tools/, build.mjs, wrangler.jsonc, and .cloudflare.env.");
 } catch (error) {
   await shutdown();
