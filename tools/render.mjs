@@ -2,7 +2,7 @@
 // Build a complete render in isolation, then atomically replace only owned output.
 import {
   closeSync, cpSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync,
-  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync,
+  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, statSync,
   rmSync, symlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -139,17 +139,57 @@ const lockPath = out + ".lock";
 let lockFd;
 let stage = null;
 let backup = null;
+const deferSignal = () => {};
+process.on("SIGINT", deferSignal);
+process.on("SIGTERM", deferSignal);
 try {
-  lockFd = openSync(lockPath, "wx", 0o600);
+  try {
+    lockFd = openSync(lockPath, "wx", 0o600);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    const lockStat = lstatSync(lockPath);
+    if (!lockStat.isFile() || lockStat.isSymbolicLink())
+      throw new Error("Render lock is not a regular file; inspect " + lockPath + ".");
+    const ownerPid = Number(readFileSync(lockPath, "utf8").trim());
+    if (!Number.isSafeInteger(ownerPid) || ownerPid < 2)
+      throw new Error("Render lock has no valid owner PID; inspect " + lockPath + ".");
+    let ownerAlive = true;
+    try { process.kill(ownerPid, 0); }
+    catch (probeError) {
+      if (probeError.code === "ESRCH") ownerAlive = false;
+      else if (probeError.code !== "EPERM") throw probeError;
+    }
+    if (ownerAlive)
+      throw new Error("Another render (PID " + ownerPid + ") is active for " + out + ".");
+    rmSync(lockPath);
+    lockFd = openSync(lockPath, "wx", 0o600);
+  }
   writeFileSync(lockFd, String(process.pid));
 } catch (error) {
-  if (error.code === "EEXIST")
-    throw new Error("Another render is already running for " + out + ".");
+  process.off("SIGINT", deferSignal);
+  process.off("SIGTERM", deferSignal);
   throw error;
 }
 
 try {
+  // Recover an interrupted swap before starting a new render. Only directories
+  // carrying our ownership marker are eligible for restoration or cleanup.
+  const backupPrefix = basename(out) + ".backup-";
+  const backups = readdirSync(parent)
+    .filter((name) => name.startsWith(backupPrefix))
+    .map((name) => join(parent, name))
+    .filter((path) => existsSync(path))
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  if (!existsSync(out) && backups.length) {
+    const restore = backups.shift();
+    assertOwnedOutput(restore);
+    renameSync(restore, out);
+  }
   assertOwnedOutput(out);
+  for (const staleBackup of backups) {
+    assertOwnedOutput(staleBackup);
+    rmSync(staleBackup, { recursive: true, force: true });
+  }
   stage = mkdtempSync(join(parent, "." + basename(out) + ".stage-"));
   const includeSource = (path) => {
     const name = basename(path);
@@ -250,4 +290,6 @@ try {
   if (backup && existsSync(backup) && !existsSync(out)) renameSync(backup, out);
   if (lockFd !== undefined) closeSync(lockFd);
   rmSync(lockPath, { force: true });
+  process.off("SIGINT", deferSignal);
+  process.off("SIGTERM", deferSignal);
 }
