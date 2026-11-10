@@ -2,7 +2,7 @@
 // Build a complete render in isolation, then atomically replace only owned output.
 import {
   closeSync, cpSync, existsSync, fstatSync, ftruncateSync, lstatSync, mkdirSync,
-  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync ,
+  mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync,
   rmSync, symlinkSync, writeFileSync, writeSync,
 } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
