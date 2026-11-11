@@ -445,7 +445,7 @@ async function r2Api(request, env, url) {
   let data = {};
   if (isImport || isDelete) {
     try {
-      if (Number(request.headers.get("content-length") || 0) > 4096)
+      if (await bodyExceedsLimit(request, 4096))
         return json({ error: "För stor begäran." }, 413);
       data = await request.json();
     } catch {
@@ -715,7 +715,7 @@ function themeRequest(app, url) {
 async function themeHandler(request, env, url) {
   if (request.method !== "POST") return json({ error: "Metoden stöds inte." }, 405);
   if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
-  if (Number(request.headers.get("content-length") || 0) > 100000)
+  if (await bodyExceedsLimit(request, 100_000))
     return json({ error: "För stor förfrågan." }, 413);
   let d;
   try {
@@ -791,7 +791,7 @@ async function readMutationJson(request) {
   if (!sameOriginRequest(request)) return { error: json({ error: "Otillåten förfrågan." }, 403) };
   if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json")
     return { error: json({ error: "Kräver JSON." }, 415) };
-  if (Number(request.headers.get("content-length") || 0) > 100_000)
+  if (await bodyExceedsLimit(request, 100_000))
     return { error: json({ error: "För stor begäran." }, 413) };
   try {
     return { data: await request.json() };
@@ -878,7 +878,7 @@ async function handleApi(request, env, url) {
     if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
     if (!/multipart\/form-data/i.test(request.headers.get("content-type") || ""))
       return json({ error: "Felaktigt formulär." }, 415);
-    if (Number(request.headers.get("content-length") || 0) > MAX_UPLOAD + 128_000)
+    if (await bodyExceedsLimit(request, MAX_UPLOAD + 128_000))
       return json({ error: "Filen är för stor." }, 413);
     let form;
     try {
