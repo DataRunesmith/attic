@@ -24,7 +24,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      security-events: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,14 +42,16 @@ jobs:
         env:
           SEMGREP_SEND_METRICS: "off"
         run: semgrep scan --config p/default --sarif --output semgrep.sarif .
-      - name: Upload Semgrep results
-        if: ${{ success() && hashFiles('semgrep.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - name: Preserve Semgrep SARIF
+        if: ${{ always() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          sarif_file: semgrep.sarif
-          category: semgrep
+          name: sarif-semgrep
+          path: semgrep.sarif
+          if-no-files-found: error
+          retention-days: 1
       - name: Summarize semgrep findings when SARIF upload is unavailable
-        if: ${{ success() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
+        if: ${{ success() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true) }}
         env:
           SARIF_FILE: semgrep.sarif
         run: |
@@ -69,7 +70,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      security-events: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,14 +94,16 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
           cache: false
-      - name: Upload Trivy results
-        if: ${{ success() && hashFiles('trivy.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - name: Preserve Trivy SARIF
+        if: ${{ always() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          sarif_file: trivy.sarif
-          category: trivy-filesystem
+          name: sarif-trivy
+          path: trivy.sarif
+          if-no-files-found: error
+          retention-days: 1
       - name: Summarize trivy-filesystem findings when SARIF upload is unavailable
-        if: ${{ success() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
+        if: ${{ success() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true) }}
         env:
           SARIF_FILE: trivy.sarif
         run: |
@@ -114,3 +116,31 @@ jobs:
               "\($severity): \(.ruleId // "unknown") \($details | @json)"
             end
           ' "$SARIF_FILE"
+  publish-sarif:
+    name: Publish SARIF results
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    needs: [semgrep, trivy]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Download scanner reports
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: sarif-*
+          path: sarif
+          merge-multiple: true
+      - name: Upload Semgrep results
+        if: ${{ success() && hashFiles('sarif/semgrep.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          sarif_file: sarif/semgrep.sarif
+          category: semgrep
+      - name: Upload Trivy results
+        if: ${{ success() && hashFiles('sarif/trivy.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          sarif_file: sarif/trivy.sarif
+          category: trivy-filesystem
