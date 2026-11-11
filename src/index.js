@@ -849,13 +849,22 @@ async function themeDelete(request, bucket, prefix) {
   if (data?.confirm !== theme) return json({ error: "Bekräftelse saknas." }, 400);
   try {
     let deleted = 0;
+    let complete = false;
     for (let page = 0; page < 50; page++) {
       const listing = await bucket.list({ prefix: `${prefix}themes/${theme}/`, limit: 1000 });
-      if (!listing.objects.length) break;
+      if (!listing.objects.length) {
+        complete = true;
+        break;
+      }
       await bucket.delete(listing.objects.map((o) => o.key));
       deleted += listing.objects.length;
-      if (!listing.truncated) break;
+      if (!listing.truncated) {
+        complete = true;
+        break;
+      }
     }
+    if (!complete)
+      return json({ error: "Temat innehåller fler objekt än raderingsgränsen; kör igen för att fortsätta.", deleted }, 503);
     return json({ deleted, theme });
   } catch {
     return json({ error: "Temat kunde inte raderas." }, 503);
