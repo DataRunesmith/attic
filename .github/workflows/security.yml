@@ -184,16 +184,82 @@ jobs:
           if [ "${{ needs.semgrep.result }}" = "success" ]; then test -s "$RUNNER_TEMP/sarif-artifacts/semgrep.sarif"; fi
           if [ "${{ needs.trivy.result }}" = "success" ]; then test -s "$RUNNER_TEMP/sarif-artifacts/trivy.sarif"; fi
       - name: Upload Semgrep results
+        id: upload_semgrep
         if: ${{ !cancelled() && needs.semgrep.result == 'success' }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: ${{ runner.temp }}/sarif-artifacts/semgrep.sarif
           checkout_path: ${{ github.workspace }}
           category: semgrep
+      - name: Summarize Semgrep findings if SARIF publication fails
+        if: ${{ !cancelled() && steps.upload_semgrep.outcome == 'failure' }}
+        env:
+          SARIF_FILE: ${{ runner.temp }}/sarif-artifacts/semgrep.sarif
+        run: |
+          if [ -s "$SARIF_FILE" ]; then
+            jq -r '
+              [.runs[].results[]?] |
+              if length == 0 then "No findings reported."
+              else .[] |
+                (if any(.suppressions[]?; .kind == "inSource") then "Suppressed" else "Finding" end) as $kind |
+                ([.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
+                "\($kind): \(.ruleId // "unknown") at \($where)"
+              end
+            ' "$SARIF_FILE"
+          else
+            echo "Semgrep SARIF artifact is unavailable."
+          fi
       - name: Upload Trivy results
+        id: upload_trivy
         if: ${{ !cancelled() && needs.trivy.result == 'success' }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: ${{ runner.temp }}/sarif-artifacts/trivy.sarif
           checkout_path: ${{ github.workspace }}
           category: trivy-filesystem
+      - name: Summarize Trivy findings if SARIF publication fails
+        if: ${{ !cancelled() && steps.upload_trivy.outcome == 'failure' }}
+        env:
+          SARIF_FILE: ${{ runner.temp }}/sarif-artifacts/trivy.sarif
+        run: |
+          if [ -s "$SARIF_FILE" ]; then
+            jq -r '
+              [
+                .runs[] as $run
+                | $run.results[]?
+                | . as $result
+                | {
+                    result: $result,
+                    rule: (
+                      ($run.tool.driver.rules // [])
+                      | map(select(.id == $result.ruleId))
+                      | .[0] // {}
+                    )
+                  }
+              ] as $items
+              | if ($items | length) == 0 then "No findings reported."
+                else
+                  (
+                    $items[] |
+                    (.rule.name // "UnknownIssue") as $rule_name |
+                    (.rule.properties.tags // []) as $tags |
+                    (.result.ruleId // "unknown") as $rule_id |
+                    ([ $tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN") ] | .[0] // .result.level // "unknown") as $severity |
+                    ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
+                    (if $rule_name == "Secret" then "Secret"
+                     elif $rule_name == "Misconfiguration" then "Misconfiguration"
+                     elif $rule_name == "License" then "License"
+                     elif ($rule_name | contains("Vulnerability")) or ($rule_id | startswith("CVE-") or startswith("GHSA-")) then "Vulnerability"
+                     else "Finding" end) as $kind |
+                    if $kind == "Secret" then
+                      "Secret [\($severity)] \($rule_id) at \($where): match redacted"
+                    else
+                      (.result.message.text // "No detail") as $details |
+                      "\($kind) [\($severity)] \($rule_id) at \($where): \($details | @json)"
+                    end
+                  )
+                end
+            ' "$SARIF_FILE"
+          else
+            echo "Trivy SARIF artifact is unavailable."
+          fi
