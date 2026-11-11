@@ -65,6 +65,7 @@ if (!current?.git_repository)
 const buildKeys = [
   "PUBLIC_HOST", "PUBLIC_ORIGIN", "GALLERY_BUCKET", "LEGACY_BUCKET",
   "SECRETS_STORE_ID", "CLOUDFLARE_ACCOUNT_ID",
+  ...(values.CF_ACCESS_AUD ? ["CF_ACCESS_AUD"] : []),
 ];
 const environmentVariables = Object.fromEntries(
   buildKeys.map((key) => [key, { value: values[key], is_secret: false }]),
