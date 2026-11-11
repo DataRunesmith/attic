@@ -128,7 +128,9 @@ const values = valuesFile === "-"
   ? new Map(declared.filter((name) => name in process.env)
       .map((name) => [name, String(process.env[name]).replace(/\\n/g, "\n")]))
   : parseEnv(resolve(valuesFile));
-const missing = declared.filter((name) => !values.has(name));
+const optional = new Set(["CF_ACCESS_AUD"]);
+for (const name of optional) if (!values.has(name)) values.set(name, "");
+const missing = declared.filter((name) => !optional.has(name) && !values.has(name));
 if (missing.length) {
   console.error((valuesFile === "-" ? "the environment" : valuesFile) +
     " is missing: " + missing.join(", "));
