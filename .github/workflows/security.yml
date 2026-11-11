@@ -120,7 +120,7 @@ jobs:
               .runs[] as $run
               | $run.results[]?
               | . as $result
-              | {result: $result}
+              | {result: $result, rules: $run.tool.driver.rules}
             ] as $items
             | if ($items | length) == 0 then "No findings reported."
               else
@@ -129,7 +129,7 @@ jobs:
                   (.result.message.text // "") as $message |
                   (.result.ruleId // "unknown") as $rule_id |
                   ([$message | scan("Severity: (CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)") | .[0]] | .[0]) as $message_severity |
-                  ([.result.rule.properties.tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0] // $message_severity // .result.level // "unknown") as $severity |
+                  ([.rules[.result.ruleIndex].properties.tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0] // $message_severity // .result.level // "unknown") as $severity |
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   (if ($message | contains("\nSecret ")) or ($message | contains("\nMatch: ")) then "Secret"
                    elif ($message | contains("\nLicense ")) then "License"
@@ -221,7 +221,7 @@ jobs:
               .runs[] as $run
               | $run.results[]?
               | . as $result
-              | {result: $result}
+              | {result: $result, rules: $run.tool.driver.rules}
             ] as $items
             | if ($items | length) == 0 then "No findings reported."
               else
@@ -230,7 +230,7 @@ jobs:
                   (.result.message.text // "") as $message |
                   (.result.ruleId // "unknown") as $rule_id |
                   ([$message | scan("Severity: (CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)") | .[0]] | .[0]) as $message_severity |
-                  ([.result.rule.properties.tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0] // $message_severity // .result.level // "unknown") as $severity |
+                  ([.rules[.result.ruleIndex].properties.tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0] // $message_severity // .result.level // "unknown") as $severity |
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   (if ($message | contains("\nSecret ")) or ($message | contains("\nMatch: ")) then "Secret"
                    elif ($message | contains("\nLicense ")) then "License"
