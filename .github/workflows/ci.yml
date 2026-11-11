@@ -25,4 +25,5 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: node build.mjs
+      - run: sh tools/deploy.sh cloudflare.example.env --dry-run
       - run: node tools/check-addresses.mjs

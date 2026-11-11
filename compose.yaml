@@ -1,0 +1,15 @@
+# Self-hosted copy. Set ADMIN_PASSWORD in the shell or in a .env file next to
+# this file, then: docker compose up -d
+services:
+  attic:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8787}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD to at least 8 characters}
+    volumes:
+      - data:/data
+volumes:
+  data:
