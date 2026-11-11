@@ -36,6 +36,17 @@ if (!valuesFile || !outArg) {
   console.error("usage: node tools/render.mjs <values.env | -> <out-dir> [overlay-dir]");
   process.exit(2);
 }
+
+const validateCliPath = (value, name) => {
+  if (typeof value !== "string" || value.length === 0) throw new Error(`${name} must be a non-empty path.`);
+  if (value.includes("\0")) throw new Error(`${name} must not contain NUL bytes.`);
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.split("/").includes("..")) throw new Error(`${name} must not contain parent-directory segments ("..").`);
+};
+
+validateCliPath(outArg, "out-dir");
+if (overlayArg) validateCliPath(overlayArg, "overlay-dir");
+
 const source = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 const requestedOut = resolve(outArg);
 mkdirSync(dirname(requestedOut), { recursive: true });
