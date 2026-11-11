@@ -77,7 +77,7 @@ function utf8Decode(data) {
 // Password mode: a signed cookie "<expiry>.<hmac>" keyed by ADMIN_PASSWORD, so
 // changing the password logs every session out.
 const SESSION_COOKIE = "attic_session";
-const SESSION_SECONDS = 30 * 24 * 3600;
+const SESSION_SECONDS = 12 * 3600;
 async function sessionMac(password, value) {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -101,7 +101,15 @@ function cookieValue(request, name) {
 async function passwordAuthorized(request, env) {
   const password = String(env.ADMIN_PASSWORD || "");
   const [expiry, mac] = cookieValue(request, SESSION_COOKIE).split(".");
-  if (password.length < 8 || !expiry || !mac || Number(expiry) < Date.now() / 1000) return false;
+  const expirySeconds = Number(expiry);
+  if (
+    password.length < 16 ||
+    !/^\\d+$/.test(expiry) ||
+    !mac ||
+    !Number.isSafeInteger(expirySeconds) ||
+    expirySeconds <= Math.floor(Date.now() / 1000) ||
+    expirySeconds > Math.floor(Date.now() / 1000) + SESSION_SECONDS
+  ) return false;
   const expected = await sessionMac(password, expiry);
   return expected.length === mac.length && timingSafeEqual(expected, mac);
 }
@@ -128,13 +136,15 @@ async function passwordAuthRoute(request, env, url) {
   const secure = url.protocol === "https:" ? "; Secure" : "";
   if (url.pathname === "/auth/login" && request.method === "GET") return loginPage();
   if (url.pathname === "/auth/login" && request.method === "POST") {
+    if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
+    if (await bodyExceedsLimit(request, 8192)) return json({ error: "För stor förfrågan." }, 413);
     const form = await request.formData().catch(() => null);
     const given = String(form?.get("password") || "");
     const password = String(env.ADMIN_PASSWORD || "");
-    if (password.length < 8 || !timingSafeEqual(given, password)) {
+    if (password.length < 16 || !timingSafeEqual(given, password)) {
       await new Promise((resolve) => setTimeout(resolve, 800));
       return loginPage(
-        password.length < 8 ? "ADMIN_PASSWORD saknas eller är för kort." : "Fel lösenord.",
+        password.length < 16 ? "ADMIN_PASSWORD saknas eller är för kort (minst 16 tecken)." : "Fel lösenord.",
       );
     }
     const expiry = String(Math.floor(Date.now() / 1000) + SESSION_SECONDS);
@@ -143,6 +153,8 @@ async function passwordAuthRoute(request, env, url) {
   }
   // Same logout link as Access; behind Cloudflare the edge answers it instead.
   if (url.pathname === "/cdn-cgi/access/logout" || url.pathname === "/auth/logout") {
+    if (request.method === "POST" && !sameOriginRequest(request))
+      return json({ error: "Otillåten förfrågan." }, 403);
     const cookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
     return new Response(null, {
       status: 303,
