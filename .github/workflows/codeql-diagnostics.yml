@@ -1,8 +1,8 @@
 name: CodeQL diagnostics
 
 on:
-  pull_request:
-  workflow_dispatch:
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
@@ -10,10 +10,12 @@ permissions:
 
 jobs:
   analyze:
+    if: github.event.issue.pull_request && github.event.comment.body == '/run-codeql-diagnostics'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.issue.number }}/head
           persist-credentials: false
       - uses: github/codeql-action/init@v4
         with:
