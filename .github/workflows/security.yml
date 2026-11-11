@@ -91,6 +91,7 @@ jobs:
           output: trivy.sarif
           version: v0.70.0
           scanners: vuln,misconfig,secret,license
+          trivy-flags: --include-dev-deps
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
           cache: false
