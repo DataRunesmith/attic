@@ -51,7 +51,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Summarize semgrep findings when SARIF upload is unavailable
-        if: ${{ success() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true) }}
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' && (steps.semgrep_scan.outcome == 'failure' || (success() && steps.semgrep_scan.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true)) }}
         env:
           SARIF_FILE: semgrep.sarif
         run: |
@@ -121,9 +121,9 @@ jobs:
                   )
                 }
             ] as $items
-            | ($items | map(select(any(.tags[]?; (ascii_downcase | contains("secret"))))) | length) as $secret_count
+            | ($items | map(select(any(.tags[]?; (ascii_downcase | contains("secret")))))) as $secret_items
             | ($items | map(select((any(.tags[]?; (ascii_downcase | contains("secret")))) | not))) as $visible
-            | if ($visible | length) == 0 and $secret_count == 0 then "No findings reported."
+            | if ($visible | length) == 0 and ($secret_items | length) == 0 then "No findings reported."
               else
                 (
                   $visible[] |
@@ -138,7 +138,13 @@ jobs:
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   "\($kind) [\($severity)] \($rule) at \($where): \($details | @json)"
                 ),
-                (if $secret_count > 0 then "Secret findings withheld from logs: \($secret_count)" else empty end)
+                (
+                  $secret_items[] |
+                  (.result.properties.severity // .result.level // "unknown") as $severity |
+                  (.result.ruleId // "unknown") as $rule |
+                  ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
+                  "Secret [\($severity)] \($rule) at \($where): match redacted"
+                )
               end
           ' "$SARIF_FILE"
   publish-sarif:
