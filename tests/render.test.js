@@ -16,7 +16,7 @@ function run(values, out, overlay, buildOutput = false) {
   const dir = mkdtempSync(join(tmpdir(), "attic-render-test-"));
   try {
     const envFile = join(dir, "values.env");
-    writeFileSync(envFile, declared.map((name) => name + "=" + (values?.[name] ?? "test-value")).join("\n") + "\n");
+    writeFileSync(envFile, declared.map((name) => name + "=" + (values?.[name] ?? (name === "CF_ACCESS_AUD" ? "" : "test-value"))).join("\n") + "\n");
     const args = [renderer, envFile, out, ...(overlay ? [overlay] : []), ...(buildOutput ? ["--build"] : [])];
     return spawnSync(process.execPath, args, { cwd: root, encoding: "utf8" });
   } finally {
