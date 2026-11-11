@@ -24,14 +24,13 @@ trap 'exit 1' HUP INT TERM
 
 # Recover every previously claimed import. A new import.env is claimed last
 # and therefore takes precedence over older pending values with the same key.
-pending=
+set --
 for candidate in "$data"/.import.claim.*/import.env; do
   [ -f "$candidate" ] || continue
   [ ! -L "$candidate" ] || { echo "A pending import must not be a symlink." >&2; exit 1; }
   claim_dir=${candidate%/import.env}
   [ ! -L "$claim_dir" ] || { echo "A pending import directory must not be a symlink." >&2; exit 1; }
-  pending="$pending
-$candidate"
+  set -- "$@" "$candidate"
 done
 
 if [ -f "$import" ]; then
@@ -43,11 +42,10 @@ if [ -f "$import" ]; then
     exit 1
   fi
   [ ! -L "$new_claim" ] || { echo "Claimed import must not be a symlink." >&2; exit 1; }
-  pending="$pending
-$new_claim"
+  set -- "$@" "$new_claim"
 fi
 
-if [ -n "$pending" ]; then
+if [ "$#" -gt 0 ]; then
   raw=$(mktemp "$data/.settings.raw.XXXXXX")
   merged=$(mktemp "$data/.settings.env.XXXXXX")
   if [ -f "$settings" ]; then
