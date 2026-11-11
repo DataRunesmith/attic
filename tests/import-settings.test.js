@@ -49,7 +49,7 @@ test("settings importer recovers claimed imports and preserves newer values", ()
 
 test("settings importer retries a previously claimed import on restart", () => {
   const data = mkdtempSync(join(tmpdir(), "attic import recovery "));
-  const claim = join(data, ".import.claim-interrupted");
+  const claim = join(data, ".import.claim.interrupted");
   mkdirSync(claim);
   writeFileSync(join(claim, "import.env"), "RECOVERED=yes\n");
   try {
