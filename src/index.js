@@ -175,7 +175,7 @@ async function accessAuthorized(request, env) {
   if (!aud || /^__.*__$/.test(aud) || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(team))
     return false;
   const token = request.headers.get("cf-access-jwt-assertion");
-  if (!token) return false;
+  if (!token || token.length > 16_384) return false;
   const parts = token.split(".");
   if (parts.length !== 3) return false;
   try {
@@ -185,21 +185,26 @@ async function accessAuthorized(request, env) {
     if (
       header.alg !== "RS256" ||
       typeof header.kid !== "string" ||
+      header.kid.length === 0 ||
+      header.kid.length > 256 ||
       payload.iss !== `https://${team}` ||
+      typeof payload.exp !== "number" ||
+      !Number.isFinite(payload.exp) ||
       payload.exp <= now ||
-      (payload.nbf !== undefined && payload.nbf > now) ||
+      (payload.nbf !== undefined &&
+        (typeof payload.nbf !== "number" || !Number.isFinite(payload.nbf) || payload.nbf > now)) ||
       !(Array.isArray(payload.aud) ? payload.aud.includes(aud) : payload.aud === aud)
     )
       return false;
     const certUrl = `https://${team}/cdn-cgi/access/certs`;
     if (certCache.url !== certUrl || certCache.expires < Date.now()) {
-      const response = await fetch(certUrl, { headers: { accept: "application/json" } });
+      const response = await fetch(certUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5_000) });
       if (!response.ok) return false;
       const data = await response.json();
       if (!Array.isArray(data.keys)) return false;
       certCache = { url: certUrl, expires: Date.now() + 15 * 60 * 1000, keys: data.keys };
     }
-    const jwk = certCache.keys.find((k) => k.kid === header.kid && k.kty === "RSA");
+    const jwk = certCache.keys.find((k) => k.kid === header.kid && k.kty === "RSA" && (k.alg === undefined || k.alg === "RS256") && (k.use === undefined || k.use === "sig"));
     if (!jwk) return false;
     const publicKey = await crypto.subtle.importKey(
       "jwk",
