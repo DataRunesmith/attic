@@ -149,7 +149,7 @@ jobs:
           ' "$SARIF_FILE"
   publish-sarif:
     name: Publish SARIF results
-    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
     needs: [semgrep, trivy]
     runs-on: ubuntu-latest
     permissions:
@@ -168,6 +168,13 @@ jobs:
           pattern: sarif-*
           path: sarif
           merge-multiple: true
+      - name: Validate expected SARIF artifacts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -eu
+          if [ "${{ needs.semgrep.result }}" = "success" ]; then test -s sarif/semgrep.sarif; fi
+          if [ "${{ needs.trivy.result }}" = "success" ]; then test -s sarif/trivy.sarif; fi
       - name: Upload Semgrep results
         if: ${{ !cancelled() && hashFiles('sarif/semgrep.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
