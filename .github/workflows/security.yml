@@ -36,22 +36,33 @@ jobs:
           python-version: "3.13"
       - name: Install Semgrep
         run: python -m pip install --disable-pip-version-check "semgrep==1.185.0"
+      - name: Remove stale Semgrep report
+        run: rm -f semgrep.sarif
       - name: Run Semgrep
+        id: semgrep_scan
         env:
           SEMGREP_SEND_METRICS: "off"
         run: semgrep scan --config p/default --sarif --output semgrep.sarif .
       - name: Upload Semgrep results
-        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
+        if: ${{ success() && hashFiles('semgrep.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: semgrep.sarif
           category: semgrep
       - name: Summarize semgrep findings when SARIF upload is unavailable
-        if: ${{ always() && hashFiles('semgrep.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
+        if: ${{ success() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
         env:
           SARIF_FILE: semgrep.sarif
         run: |
-          jq -r '[.runs[].results[]?] | if length == 0 then "No findings reported." else .[] | "Finding: \(.ruleId // "unknown") at \([.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", "))" end' "$SARIF_FILE"
+          jq -r '
+            [.runs[].results[]?] |
+            if length == 0 then "No findings reported."
+            else .[] |
+              (if any(.suppressions[]?; .kind == "inSource") then "Suppressed" else "Finding" end) as $kind |
+              ([.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
+              "\($kind): \(.ruleId // "unknown") at \($where)"
+            end
+          ' "$SARIF_FILE"
   trivy:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest
@@ -66,7 +77,10 @@ jobs:
           persist-credentials: false
       - name: Generate npm lockfile for dependency analysis
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Remove stale Trivy report
+        run: rm -f trivy.sarif
       - name: Run Trivy
+        id: trivy_scan
         env:
           TRIVY_INCLUDE_DEV_DEPS: "true"
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -81,14 +95,22 @@ jobs:
           exit-code: "0"
           cache: false
       - name: Upload Trivy results
-        if: ${{ !cancelled() && hashFiles('trivy.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
+        if: ${{ success() && hashFiles('trivy.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy.sarif
           category: trivy-filesystem
       - name: Summarize trivy-filesystem findings when SARIF upload is unavailable
-        if: ${{ always() && hashFiles('trivy.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
+        if: ${{ success() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
         env:
           SARIF_FILE: trivy.sarif
         run: |
-          jq -r '[.runs[].results[]?] | if length == 0 then "No findings reported." else .[] | "Finding: \(.ruleId // "unknown") at \([.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", "))" end' "$SARIF_FILE"
+          jq -r '
+            [.runs[].results[]? | select((.ruleId // "") | startswith("CVE-"))] |
+            if length == 0 then "No vulnerability findings reported."
+            else .[] |
+              (.properties.severity // .level // "unknown") as $severity |
+              (.message.text // "No vulnerability details supplied") as $details |
+              "\($severity): \(.ruleId // "unknown") \($details | @json)"
+            end
+          ' "$SARIF_FILE"
