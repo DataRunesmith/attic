@@ -26,6 +26,35 @@ function json(data, status = 200) {
   });
 }
 
+async function bodyExceedsLimit(request, maxBytes) {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\\d+$/.test(contentLength)) return true;
+    const length = Number(contentLength);
+    if (!Number.isSafeInteger(length) || length > maxBytes) return true;
+  }
+  const body = request.clone().body;
+  if (!body) return false;
+  const reader = body.getReader();
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return false;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await Promise.allSettled([
+          reader.cancel(),
+          request.body?.cancel() ?? Promise.resolve(),
+        ]);
+        return true;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function slug(value) {
   return String(value || "")
     .normalize("NFKD")
