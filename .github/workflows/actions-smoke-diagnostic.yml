@@ -1,0 +1,10 @@
+name: Actions smoke diagnostic
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm runner starts
+        run: echo "GitHub Actions runner started"
