@@ -57,7 +57,7 @@ if (isWithin(out, source))
   throw new Error("Output path cannot be the source directory or one of its parent directories.");
 if (isWithin(source, out)) {
   const outputRoot = relative(source, out).split(sep)[0];
-  if (!["dist", ".wrangler", "site-docs", "build"].includes(outputRoot))
+  if (!["dist"].includes(outputRoot))
     throw new Error("An output directory inside the repository must be a dedicated generated directory (dist, .wrangler, site-docs or build).");
 }
 const SKIP = new Set(["node_modules", ".wrangler", "dist", ".dev.vars", ".git", ".github"]);
@@ -115,12 +115,13 @@ if (missing.length) {
 // Only a dedicated generated output directory (or a path outside the repo)
 // may be replaced. The path and its parent have been canonicalized above.
 rmSync(out, { recursive: true, force: true });
-const keep = (path) =>
-  path !== out &&
-  !path.startsWith(out + "/") &&
-  !relative(source, path)
-    .split("/")
-    .some((part) => SKIP.has(part));
+const keep = (path) => {
+  const outRelative = relative(out, path);
+  const isOutput = outRelative === "" ||
+    (outRelative !== ".." && !outRelative.startsWith(`..${sep}`) && !isAbsolute(outRelative));
+  const sourceRelative = relative(source, path);
+  return !isOutput && !sourceRelative.split(sep).some((part) => SKIP.has(part));
+};
 for (const name of readdirSync(source)) {
   const path = join(source, name);
   if (keep(path)) cpSync(path, join(out, name), { recursive: true, filter: keep });
@@ -140,7 +141,7 @@ if (overlayArg && existsSync(overlayArg)) cpSync(overlayArg, out, { recursive: t
     const path = join(dir, entry.name);
     if (entry.name === "node_modules") {
       symlinkSync(path, join(out, relative(source, path)));
-    } else if (relative(source, path).split("/").length < 3) {
+    } else if (relative(source, path).split(sep).length < 3) {
       linkModules(path);
     }
   }
@@ -160,7 +161,16 @@ let replaced = 0;
     // cannot be swapped between them.
     const fd = openSync(path, "r+");
     try {
-      if (fstatSync(fd).size > 5_000_000) continue;
+      const descriptorInfo = fstatSync(fd);
+      const pathInfo = lstatSync(path);
+      if (
+        !descriptorInfo.isFile() ||
+        !pathInfo.isFile() ||
+        pathInfo.isSymbolicLink() ||
+        descriptorInfo.dev !== pathInfo.dev ||
+        descriptorInfo.ino !== pathInfo.ino ||
+        descriptorInfo.size > 5_000_000
+      ) continue;
       let text = readFileSync(fd, "utf8");
       const before = text;
       for (const name of declared) text = text.split(`__${name}__`).join(values.get(name));
