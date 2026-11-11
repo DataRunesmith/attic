@@ -29,7 +29,7 @@ function json(data, status = 200) {
 async function bodyExceedsLimit(request, maxBytes) {
   const contentLength = request.headers.get("content-length");
   if (contentLength !== null) {
-    if (!/^\\d+$/.test(contentLength)) return true;
+    if (!/^\d+$/.test(contentLength)) return true;
     const length = Number(contentLength);
     if (!Number.isSafeInteger(length) || length > maxBytes) return true;
   }
@@ -104,7 +104,7 @@ async function passwordAuthorized(request, env) {
   const expirySeconds = Number(expiry);
   if (
     password.length < 16 ||
-    !/^\\d+$/.test(expiry) ||
+    !/^\d+$/.test(expiry) ||
     !mac ||
     !Number.isSafeInteger(expirySeconds) ||
     expirySeconds <= Math.floor(Date.now() / 1000) ||
