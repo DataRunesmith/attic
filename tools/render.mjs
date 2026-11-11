@@ -37,43 +37,64 @@ if (!valuesFile || !outArg) {
   process.exit(2);
 }
 
+const source = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 const allowedOutRoot = realpathSync(process.cwd());
-const requestedOut = resolve(allowedOutRoot, outArg);
-  if (typeof value !== "string" || value.length === 0) throw new Error(`${name} must be a non-empty path.`);
-  if (value.includes("\0")) throw new Error(`${name} must not contain NUL bytes.`);
-  const normalized = value.replaceAll("\\", "/");
-  if (normalized.split("/").includes("..")) throw new Error(`${name} must not contain parent-directory segments ("..").`);
-};
+
+function isWithin(parent, candidate) {
+  const rel = relative(parent, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+function validateCliPath(value, name) {
+  if (typeof value !== "string" || value.length === 0)
+    throw new Error(`${name} must be a non-empty path.`);
+  if (value.includes("\\0")) throw new Error(`${name} must not contain NUL bytes.`);
+  const normalized = value.replaceAll("\\\\", "/");
+  if (normalized.split("/").includes(".."))
+    throw new Error(`${name} must not contain parent-directory segments ("..").`);
+}
 
 validateCliPath(outArg, "out-dir");
 if (overlayArg) validateCliPath(overlayArg, "overlay-dir");
 
-const source = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
-const requestedOut = resolve(outArg);
-mkdirSync(dirname(requestedOut), { recursive: true });
-const out = resolve(realpathSync(dirname(requestedOut)), basename(requestedOut));
-let outInfo;
-try {
+const requestedOut = resolve(allowedOutRoot, outArg);
 if (!isWithin(allowedOutRoot, requestedOut))
   throw new Error("Output path must stay within the current working directory.");
+mkdirSync(dirname(requestedOut), { recursive: true });
+const canonicalParent = realpathSync(dirname(requestedOut));
+const out = resolve(canonicalParent, basename(requestedOut));
+if (!isWithin(allowedOutRoot, out))
+  throw new Error("Output path resolves outside the current working directory.");
+
+let outInfo;
+try {
   outInfo = lstatSync(out);
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
 }
 if (outInfo?.isSymbolicLink()) throw new Error("Refusing to replace a symbolic-link output path.");
 if (outInfo && !outInfo.isDirectory()) throw new Error("Output path exists and is not a directory.");
-
-const isWithin = (parent, candidate) => {
-  const rel = relative(parent, candidate);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-};
 if (isWithin(out, source))
   throw new Error("Output path cannot be the source directory or one of its parent directories.");
 if (isWithin(source, out)) {
   const outputRoot = relative(source, out).split(sep)[0];
-  if (!["dist"].includes(outputRoot))
-    throw new Error("An output directory inside the repository must be a dedicated generated directory (dist, .wrangler, site-docs or build).");
+  if (outputRoot !== "dist")
+    throw new Error("An output directory inside the repository must be the dedicated generated directory dist.");
 }
+
+let overlay = null;
+if (overlayArg) {
+  const requestedOverlay = resolve(allowedOutRoot, overlayArg);
+  if (!isWithin(allowedOutRoot, requestedOverlay))
+    throw new Error("Overlay path must stay within the current working directory.");
+  const overlayInfo = lstatSync(requestedOverlay);
+  if (overlayInfo.isSymbolicLink() || !overlayInfo.isDirectory())
+    throw new Error("Overlay path must be a real directory, not a symbolic link.");
+  overlay = realpathSync(requestedOverlay);
+  if (!isWithin(allowedOutRoot, overlay) || isWithin(out, overlay) || isWithin(overlay, out))
+    throw new Error("Overlay and output directories must be separate paths inside the current working directory.");
+}
+
 const SKIP = new Set(["node_modules", ".wrangler", "dist", ".dev.vars", ".git", ".github"]);
 const TEXT = new Set([
   ".js",
@@ -138,9 +159,18 @@ const keep = (path) => {
 };
 for (const name of readdirSync(source)) {
   const path = join(source, name);
-  if (keep(path)) cpSync(path, join(out, name), { recursive: true, filter: keep });
+  if (keep(path))
+    cpSync(path, join(out, name), {
+      recursive: true,
+      filter: (candidate) => keep(candidate) && !lstatSync(candidate).isSymbolicLink(),
+    });
 }
-if (overlayArg && existsSync(overlayArg)) cpSync(overlayArg, out, { recursive: true });
+if (overlay) {
+  cpSync(overlay, out, {
+    recursive: true,
+    filter: (path) => !lstatSync(path).isSymbolicLink(),
+  });
+}
 
 // Dependencies stay in the repo; link them instead of copying.
 (function linkModules(dir) {
