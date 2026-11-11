@@ -37,7 +37,8 @@ if (!valuesFile || !outArg) {
   process.exit(2);
 }
 
-const validateCliPath = (value, name) => {
+const allowedOutRoot = realpathSync(process.cwd());
+const requestedOut = resolve(allowedOutRoot, outArg);
   if (typeof value !== "string" || value.length === 0) throw new Error(`${name} must be a non-empty path.`);
   if (value.includes("\0")) throw new Error(`${name} must not contain NUL bytes.`);
   const normalized = value.replaceAll("\\", "/");
@@ -53,6 +54,8 @@ mkdirSync(dirname(requestedOut), { recursive: true });
 const out = resolve(realpathSync(dirname(requestedOut)), basename(requestedOut));
 let outInfo;
 try {
+if (!isWithin(allowedOutRoot, requestedOut))
+  throw new Error("Output path must stay within the current working directory.");
   outInfo = lstatSync(out);
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
