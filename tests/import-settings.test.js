@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,7 +20,7 @@ function run(data) {
 
 test("settings importer recovers claimed imports and preserves newer values", () => {
   const data = mkdtempSync(join(tmpdir(), "attic import settings "));
-  const oldClaim = join(data, ".import.claim-previous");
+  const oldClaim = join(data, ".import.claim.previous");
   mkdirSync(oldClaim);
   writeFileSync(join(data, "settings.env"), "KEEP=base\nOVERRIDE=base\n");
   writeFileSync(join(oldClaim, "import.env"), "OVERRIDE=claimed\nCLAIMED=yes\n");
@@ -39,7 +39,7 @@ test("settings importer recovers claimed imports and preserves newer values", ()
       NEW: "value",
     });
     assert.equal(statSync(join(data, "settings.env")).mode & 0o777, 0o600);
-    assert.equal(readFileSync(join(data, "import.env"), "utf8"), undefined);
+    assert.equal(existsSync(join(data, "import.env")), false);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   } finally {
