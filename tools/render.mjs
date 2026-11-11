@@ -16,24 +16,50 @@ import {
   closeSync,
   cpSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
   fstatSync,
   ftruncateSync,
   openSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
   writeSync,
 } from "node:fs";
-import { dirname, extname, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const [valuesFile, outArg, overlayArg] = process.argv.slice(2);
 if (!valuesFile || !outArg) {
   console.error("usage: node tools/render.mjs <values.env | -> <out-dir> [overlay-dir]");
   process.exit(2);
 }
-const source = resolve(dirname(new URL(import.meta.url).pathname), "..");
-const out = resolve(outArg);
+const source = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
+const requestedOut = resolve(outArg);
+mkdirSync(dirname(requestedOut), { recursive: true });
+const out = resolve(realpathSync(dirname(requestedOut)), basename(requestedOut));
+let outInfo;
+try {
+  outInfo = lstatSync(out);
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+if (outInfo?.isSymbolicLink()) throw new Error("Refusing to replace a symbolic-link output path.");
+if (outInfo && !outInfo.isDirectory()) throw new Error("Output path exists and is not a directory.");
+
+const isWithin = (parent, candidate) => {
+  const rel = relative(parent, candidate);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+};
+if (isWithin(out, source))
+  throw new Error("Output path cannot be the source directory or one of its parent directories.");
+if (isWithin(source, out)) {
+  const outputRoot = relative(source, out).split(sep)[0];
+  if (!["dist", ".wrangler", "site-docs", "build"].includes(outputRoot))
+    throw new Error("An output directory inside the repository must be a dedicated generated directory (dist, .wrangler, site-docs or build).");
+}
 const SKIP = new Set(["node_modules", ".wrangler", "dist", ".dev.vars", ".git", ".github"]);
 const TEXT = new Set([
   ".js",
@@ -86,9 +112,9 @@ if (missing.length) {
   process.exit(1);
 }
 
+// Only a dedicated generated output directory (or a path outside the repo)
+// may be replaced. The path and its parent have been canonicalized above.
 rmSync(out, { recursive: true, force: true });
-// The output may sit inside the repo (e.g. build/), so copy entry by entry and
-// never into itself.
 const keep = (path) =>
   path !== out &&
   !path.startsWith(out + "/") &&
