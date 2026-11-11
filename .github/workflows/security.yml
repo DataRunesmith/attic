@@ -42,6 +42,10 @@ jobs:
         env:
           SEMGREP_SEND_METRICS: "off"
         run: semgrep scan --config p/default --sarif --output semgrep.sarif .
+      - name: Validate Semgrep SARIF report
+        if: ${{ !cancelled() && steps.semgrep_scan.outcome == 'success' }}
+        shell: bash
+        run: test -s semgrep.sarif
       - name: Preserve Semgrep SARIF
         id: semgrep_artifact
         if: ${{ always() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' }}
@@ -95,6 +99,10 @@ jobs:
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
           cache: false
+      - name: Validate Trivy SARIF report
+        if: ${{ !cancelled() && steps.trivy_scan.outcome == 'success' }}
+        shell: bash
+        run: test -s trivy.sarif
       - name: Preserve Trivy SARIF
         id: trivy_artifact
         if: ${{ always() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' }}
@@ -105,7 +113,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Summarize trivy-filesystem findings when SARIF upload is unavailable
-        if: ${{ success() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true) }}
+        if: ${{ !cancelled() && hashFiles('trivy.sarif') != '' && (steps.trivy_scan.outcome == 'failure' || steps.trivy_artifact.outcome == 'failure' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true)) }}
         env:
           SARIF_FILE: trivy.sarif
         run: |
@@ -162,27 +170,30 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Download scanner reports
+        if: ${{ !cancelled() }}
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: sarif-*
-          path: sarif
+          path: ${{ runner.temp }}/sarif-artifacts
           merge-multiple: true
       - name: Validate expected SARIF artifacts
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -eu
-          if [ "${{ needs.semgrep.result }}" = "success" ]; then test -s sarif/semgrep.sarif; fi
-          if [ "${{ needs.trivy.result }}" = "success" ]; then test -s sarif/trivy.sarif; fi
+          if [ "${{ needs.semgrep.result }}" = "success" ]; then test -s "$RUNNER_TEMP/sarif-artifacts/semgrep.sarif"; fi
+          if [ "${{ needs.trivy.result }}" = "success" ]; then test -s "$RUNNER_TEMP/sarif-artifacts/trivy.sarif"; fi
       - name: Upload Semgrep results
-        if: ${{ !cancelled() && hashFiles('sarif/semgrep.sarif') != '' }}
+        if: ${{ !cancelled() && needs.semgrep.result == 'success' }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          sarif_file: sarif/semgrep.sarif
+          sarif_file: ${{ runner.temp }}/sarif-artifacts/semgrep.sarif
+          checkout_path: ${{ github.workspace }}
           category: semgrep
       - name: Upload Trivy results
-        if: ${{ !cancelled() && hashFiles('sarif/trivy.sarif') != '' }}
+        if: ${{ !cancelled() && needs.trivy.result == 'success' }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          sarif_file: sarif/trivy.sarif
+          sarif_file: ${{ runner.temp }}/sarif-artifacts/trivy.sarif
+          checkout_path: ${{ github.workspace }}
           category: trivy-filesystem
