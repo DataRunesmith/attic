@@ -808,7 +808,7 @@ async function readMutationJson(request) {
   if (!sameOriginRequest(request)) return { error: json({ error: "Otillåten förfrågan." }, 403) };
   if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json")
     return { error: json({ error: "Kräver JSON." }, 415) };
-  if (await bodyExceedsLimit(request, 100_000))
+  if (await bodyExceedsLimit(request, 512 * 1024))
     return { error: json({ error: "För stor begäran." }, 413) };
   try {
     return { data: await request.json() };
