@@ -33,15 +33,13 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
-      - name: Install Semgrep
-        run: python -m pip install --disable-pip-version-check "semgrep==1.185.0"
       - name: Remove stale Semgrep report
         run: rm -f semgrep.sarif
       - name: Run Semgrep
         id: semgrep_scan
         env:
           SEMGREP_SEND_METRICS: "off"
-        run: semgrep scan --config p/default --sarif --output semgrep.sarif .
+        run: docker run --rm --volume "$GITHUB_WORKSPACE:/src" --workdir /src --env SEMGREP_SEND_METRICS=off semgrep/semgrep@sha256:31e9989dbc5e2019ea2f793196480e0b2e43f881984f324d2452254a167684e8 semgrep scan --config p/default --sarif --output semgrep.sarif .
       - name: Validate Semgrep SARIF report
         if: ${{ !cancelled() && steps.semgrep_scan.outcome == 'success' }}
         shell: bash
