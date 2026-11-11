@@ -12,6 +12,7 @@
 // optional overlay directory are copied on top (e.g. your own images). Routes
 // whose pattern ends up empty are dropped from wrangler.jsonc. Deploy with
 //   npx wrangler deploy --cwd <out-dir>   (politiker: --cwd <out-dir>/app)
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   cpSync,
@@ -77,9 +78,23 @@ if (outInfo && !outInfo.isDirectory()) throw new Error("Output path exists and i
 if (isWithin(out, source))
   throw new Error("Output path cannot be the source directory or one of its parent directories.");
 if (isWithin(source, out)) {
-  const outputRoot = relative(source, out).split(sep)[0];
+  const outputRelative = relative(source, out);
+  const outputRoot = outputRelative.split(sep)[0];
   if (outputRoot !== "dist")
     throw new Error("An output directory inside the repository must be the dedicated generated directory dist.");
+  try {
+    execFileSync("git", ["check-ignore", "--quiet", "--no-index", "--", outputRelative], {
+      cwd: source,
+      stdio: "ignore",
+    });
+  } catch {
+    throw new Error("An output directory inside the repository must be ignored by Git.");
+  }
+  const trackedFiles = execFileSync("git", ["ls-files", "--", outputRelative], {
+    cwd: source,
+    encoding: "utf8",
+  }).trim();
+  if (trackedFiles) throw new Error("Refusing to delete tracked files from the output directory.");
 }
 
 let overlay = null;
