@@ -982,7 +982,9 @@ async function servePublicImage(request, env, url) {
   const selectedBucket = key.startsWith("gallery/") ? env.GALLERY_BUCKET : env.LEGACY_BUCKET;
   if (!selectedBucket) return new Response("Bildlagringen är inte tillgänglig.", { status: 503 });
   try {
-    const object = await selectedBucket.get(key);
+    const object = request.method === "HEAD"
+      ? await selectedBucket.head(key)
+      : await selectedBucket.get(key);
     if (!object)
       return new Response("Bilden finns inte.", {
         status: 404,
