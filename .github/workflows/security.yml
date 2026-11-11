@@ -80,8 +80,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Generate npm lockfile for dependency analysis
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Remove stale Trivy report
         run: rm -f trivy.sarif
       - name: Run Trivy
