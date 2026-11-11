@@ -39,7 +39,7 @@ test("shared Cloudflare build validation rejects invalid and executable values",
     { SECRETS_STORE_ID: "__SECRETS_STORE_ID__" },
     { CLOUDFLARE_ACCOUNT_ID: "not-an-account-id" },
     { CF_ACCESS_AUD: "__CF_ACCESS_AUD__" },
-    { CF_ACCESS_AUD: "bad\\nvalue" },
+    { CF_ACCESS_AUD: "bad\nvalue" },
   ]) {
     assert.throws(() => validateBuildValues({ ...values(), ...patch }));
   }
