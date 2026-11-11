@@ -39,7 +39,7 @@ jobs:
         id: semgrep_scan
         env:
           SEMGREP_SEND_METRICS: "off"
-        run: docker run --rm --volume "$GITHUB_WORKSPACE:/src" --workdir /src --env SEMGREP_SEND_METRICS=off semgrep/semgrep@sha256:31e9989dbc5e2019ea2f793196480e0b2e43f881984f324d2452254a167684e8 semgrep scan --config p/default --sarif --output semgrep.sarif .
+        run: docker run --rm --volume "$GITHUB_WORKSPACE:/src" --workdir /src --user "$(id -u):$(id -g)" --env HOME=/tmp --env SEMGREP_SEND_METRICS=off semgrep/semgrep@sha256:31e9989dbc5e2019ea2f793196480e0b2e43f881984f324d2452254a167684e8 semgrep scan --config p/default --sarif --output semgrep.sarif .
       - name: Validate Semgrep SARIF report
         if: ${{ !cancelled() && steps.semgrep_scan.outcome == 'success' }}
         shell: bash
