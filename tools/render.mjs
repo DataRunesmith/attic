@@ -48,8 +48,8 @@ function isWithin(parent, candidate) {
 function validateCliPath(value, name) {
   if (typeof value !== "string" || value.length === 0)
     throw new Error(`${name} must be a non-empty path.`);
-  if (value.includes("\\0")) throw new Error(`${name} must not contain NUL bytes.`);
-  const normalized = value.replaceAll("\\\\", "/");
+  if (value.includes("\0")) throw new Error(`${name} must not contain NUL bytes.`);
+  const normalized = value.replaceAll("\\", "/");
   if (normalized.split("/").includes(".."))
     throw new Error(`${name} must not contain parent-directory segments ("..").`);
 }
@@ -150,6 +150,7 @@ if (missing.length) {
 // Only a dedicated generated output directory (or a path outside the repo)
 // may be replaced. The path and its parent have been canonicalized above.
 rmSync(out, { recursive: true, force: true });
+mkdirSync(out, { recursive: true });
 const keep = (path) => {
   const outRelative = relative(out, path);
   const isOutput = outRelative === "" ||
