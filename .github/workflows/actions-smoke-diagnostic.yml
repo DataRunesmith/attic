@@ -1,0 +1,10 @@
+name: Actions push smoke diagnostic
+on:
+  push:
+    branches: ['security/**']
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm runner starts
+        run: echo "GitHub Actions runner started"
