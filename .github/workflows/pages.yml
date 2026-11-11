@@ -27,6 +27,10 @@ jobs:
         with:
           python-version: "3.14"
       - run: pip install --no-deps -r requirements-docs.txt
+      - name: Set documentation repository owner
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: sed -i "s|__GITHUB_OWNER__|${REPOSITORY%%/*}|g" zensical.toml
       - run: node tools/docs-site.mjs
       - run: zensical build --clean --strict
       - uses: actions/upload-pages-artifact@v5.0.0

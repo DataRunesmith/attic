@@ -5,7 +5,7 @@
 [project]
 site_name = "Attic"
 site_description = "A private image archive for app icons and theme images."
-repo_url = "https://github.com/DataRunesmith/attic"
+repo_url = "https://github.com/__GITHUB_OWNER__/attic"
 docs_dir = "site-docs"
 nav = [
   { "Home" = "index.md" },
