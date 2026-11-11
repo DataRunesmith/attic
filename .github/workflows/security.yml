@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -39,11 +41,17 @@ jobs:
           SEMGREP_SEND_METRICS: "off"
         run: semgrep scan --config p/default --sarif --output semgrep.sarif .
       - name: Upload Semgrep results
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: semgrep.sarif
           category: semgrep
+      - name: Summarize semgrep findings when SARIF upload is unavailable
+        if: ${{ always() && hashFiles('semgrep.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
+        env:
+          SARIF_FILE: semgrep.sarif
+        run: |
+          jq -r '[.runs[].results[]?] | if length == 0 then "No findings reported." else .[] | "Finding: \(.ruleId // "unknown") at \([.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", "))" end' "$SARIF_FILE"
   trivy:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest
@@ -54,6 +62,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Run Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -64,12 +74,17 @@ jobs:
           version: v0.70.0
           scanners: vuln,misconfig,secret,license
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: true
           exit-code: "0"
           cache: false
       - name: Upload Trivy results
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+        if: ${{ !cancelled() && hashFiles('trivy.sarif') != '' && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]')) }}
         uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           sarif_file: trivy.sarif
           category: trivy-filesystem
+      - name: Summarize trivy-filesystem findings when SARIF upload is unavailable
+        if: ${{ always() && hashFiles('trivy.sarif') != '' && github.event_name == 'pull_request' && (github.event.pull_request.head.repo.fork == true || github.actor == 'dependabot[bot]') }}
+        env:
+          SARIF_FILE: trivy.sarif
+        run: |
+          jq -r '[.runs[].results[]?] | if length == 0 then "No findings reported." else .[] | "Finding: \(.ruleId // "unknown") at \([.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", "))" end' "$SARIF_FILE"
