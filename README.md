@@ -24,7 +24,7 @@ Attic requires a render step before Wrangler deploys. The tracked `wrangler.json
    - `GALLERY_BUCKET`: the destination bucket for new Attic uploads.
    - `LEGACY_BUCKET`: the existing bucket containing older images. Do not create an empty replacement if this bucket already contains data.
 6. Create a Cloudflare Secrets Store and add the secret **WORKERS_API_TOKEN**. Grant that token only the Cloudflare Access application permissions needed by the App Launcher feature. Put the Secrets Store ID in `SECRETS_STORE_ID`.
-7. Ensure `PUBLIC_HOST` is a hostname on a zone in the same Cloudflare account. `PUBLIC_ORIGIN` must be its HTTPS origin. Keep the existing hostname and Worker Access policies in Cloudflare. Cloudflare authenticates requests before the Worker runs; Attic checks `ctx.access`, so the Workers deployment does not need Access AUD, team-domain, or JWKS configuration in its build variables. Do not add an `access.dev` production setting.
+7. Ensure `PUBLIC_HOST` is a hostname on a zone in the same Cloudflare account. `PUBLIC_ORIGIN` must be its HTTPS origin. Keep the existing hostname and Worker Access policies in Cloudflare. Cloudflare authenticates requests before the Worker runs; Attic checks `ctx.access`, so the Workers deployment does not need team-domain or JWKS configuration. `CF_ACCESS_AUD` is optional: set it in `.cloudflare.env` if you want Attic to reject a native Access context whose audience differs from that value. Leave it blank to rely on the existing Cloudflare Access application and policies. Do not add an `access.dev` production setting.
 
 The helper configures these Workers Builds settings:
 
@@ -63,6 +63,6 @@ npm run dev
 
 For self-hosted container operation, see `docker/entrypoint.sh`. `PUBLIC_URL` must be an HTTP(S) origin without credentials, path, query, or fragment. Container settings are persisted under `/data`. Password login is rate-limited per client using a SHA-256 fingerprint of Cloudflare’s `cf-connecting-ip` header and atomic conditional writes in the gallery R2 bucket (8 attempts per 15 minutes per client). Raw IP addresses are not stored in limiter keys. Its internal records live under `gallery/_system/` and are not public image paths.
 
-The container's optional `AUTH_MODE=cloudflare-access` still uses its standalone JWT/JWKS validation and therefore requires `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`; this is separate from the Cloudflare Workers deployment.
+The container's optional `AUTH_MODE=cloudflare-access` still uses its standalone JWT/JWKS validation and therefore requires `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`; this is separate from the Cloudflare Workers deployment. The Workers deployment can optionally pin its native Access context with `CF_ACCESS_AUD` without configuring JWKS.
 
 Theme uploads and deletion are coordinated with short-lived, conditional R2 leases under `gallery/_system/theme-locks/`. This uses the existing R2 bucket and does not require a Durable Object, database, queue, or additional Cloudflare resource. ZIP imports are capped at 64 MiB total expanded image data, 12 MiB per image, and a 2048:1 maximum compression ratio.
