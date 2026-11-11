@@ -128,7 +128,7 @@ jobs:
                   $items[] |
                   (.result.message.text // "") as $message |
                   (.result.ruleId // "unknown") as $rule_id |
-                  ([$message | scan("Severity: (CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)") | .[0]] | .[0]) as $message_severity |
+                  ([$message | split("\n")[] | select(startswith("Severity: ")) | sub("^Severity: "; "") | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0]) as $message_severity |
                   ($message_severity // ([.rules[.result.ruleIndex].properties.tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0]) // .result.level // "unknown") as $severity |
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   (if ($message | contains("\nSecret ")) or ($message | contains("\nMatch: ")) then "Secret"
@@ -229,7 +229,7 @@ jobs:
                   $items[] |
                   (.result.message.text // "") as $message |
                   (.result.ruleId // "unknown") as $rule_id |
-                  ([$message | scan("Severity: (CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN)") | .[0]] | .[0]) as $message_severity |
+                  ([$message | split("\n")[] | select(startswith("Severity: ")) | sub("^Severity: "; "") | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0]) as $message_severity |
                   ($message_severity // ([.rules[.result.ruleIndex].properties.tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN")][0]) // .result.level // "unknown") as $severity |
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   (if ($message | contains("\nSecret ")) or ($message | contains("\nMatch: ")) then "Secret"
