@@ -516,14 +516,21 @@ test("password mode: login page, wrong password, session cookie and logout", asy
     ADMIN_PASSWORD: "correct horse battery",
     ASSETS: { fetch: async () => new Response("<html>ok</html>") },
   };
-  const at = (path, init) => worker.fetch(new Request(`http://localhost:8787${path}`, init), e);
+  const at = (path, init = {}) => {
+    const headers = new Headers(init.headers);
+    if (init.method && init.method.toUpperCase() !== "GET" && !headers.has("origin"))
+      headers.set("origin", "http://localhost:8787");
+    return worker.fetch(new Request(`http://localhost:8787${path}`, { ...init, headers }), e);
+  };
   const home = await at("/");
   assert.equal(home.status, 303);
   assert.equal(home.headers.get("location"), "/auth/login");
   assert.equal((await at("/api/images")).status, 401);
   assert.equal((await at("/auth/login")).status, 200);
 
-  const form = (password) => ({ method: "POST", body: new URLSearchParams({ password }) });
+  const form = (password, origin = "http://localhost:8787") => ({ method: "POST", headers: { origin }, body: new URLSearchParams({ password }) });
+  assert.equal((await at("/auth/login", form("correct horse battery", "https://attacker.example"))).status, 403);
+  assert.equal((await at("/auth/login", { ...form("correct horse battery"), body: "x".repeat(8193) })).status, 413);
   assert.equal((await at("/auth/login", form("wrong"))).status, 401);
   const ok = await at("/auth/login", form("correct horse battery"));
   assert.equal(ok.status, 303);
@@ -532,6 +539,7 @@ test("password mode: login page, wrong password, session cookie and logout", asy
   assert.equal((await at("/", { headers: { cookie } })).status, 200);
   assert.equal((await at("/", { headers: { cookie: cookie + "x" } })).status, 303);
 
+  assert.equal((await at("/auth/logout", { method: "POST", headers: { cookie, origin: "https://attacker.example" } })).status, 403);
   const out = await at("/cdn-cgi/access/logout", { headers: { cookie } });
   assert.match(out.headers.get("set-cookie"), /Max-Age=0/);
 });
