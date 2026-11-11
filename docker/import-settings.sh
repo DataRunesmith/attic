@@ -55,7 +55,7 @@ if [ -n "$pending" ]; then
   else
     : >"$raw"
   fi
-  for candidate in $pending; do
+  for candidate do
     [ -f "$candidate" ] || continue
     [ -r "$candidate" ] || { echo "Cannot read pending import $candidate." >&2; exit 1; }
     cat "$candidate" >>"$raw"
@@ -78,7 +78,7 @@ if [ -n "$pending" ]; then
   raw=
 
   # Claims are removed only after the merged settings file is committed.
-  for candidate in $pending; do
+  for candidate do
     if rm -f "$candidate"; then
       rmdir "${candidate%/import.env}" 2>/dev/null || :
     else
