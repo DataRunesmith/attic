@@ -31,5 +31,8 @@
       "secret_name": "WORKERS_API_TOKEN"
     }
   ],
+  "vars": {
+    "CF_ACCESS_AUD": "__CF_ACCESS_AUD__"
+  },
   "account_id": "__CLOUDFLARE_ACCOUNT_ID__"
 }
