@@ -43,6 +43,7 @@ jobs:
           SEMGREP_SEND_METRICS: "off"
         run: semgrep scan --config p/default --sarif --output semgrep.sarif .
       - name: Preserve Semgrep SARIF
+        id: semgrep_artifact
         if: ${{ always() && steps.semgrep_scan.outcome == 'success' && hashFiles('semgrep.sarif') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -51,7 +52,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Summarize semgrep findings when SARIF upload is unavailable
-        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' && (steps.semgrep_scan.outcome == 'failure' || (success() && steps.semgrep_scan.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true)) }}
+        if: ${{ !cancelled() && hashFiles('semgrep.sarif') != '' && (steps.semgrep_scan.outcome == 'failure' || steps.semgrep_artifact.outcome == 'failure' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true)) }}
         env:
           SARIF_FILE: semgrep.sarif
         run: |
@@ -95,6 +96,7 @@ jobs:
           exit-code: "0"
           cache: false
       - name: Preserve Trivy SARIF
+        id: trivy_artifact
         if: ${{ always() && steps.trivy_scan.outcome == 'success' && hashFiles('trivy.sarif') != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -114,36 +116,33 @@ jobs:
               | . as $result
               | {
                   result: $result,
-                  tags: (
+                  rule: (
                     ($run.tool.driver.rules // [])
                     | map(select(.id == $result.ruleId))
-                    | .[0].properties.tags // []
+                    | .[0] // {}
                   )
                 }
             ] as $items
-            | ($items | map(select(any(.tags[]?; (ascii_downcase | contains("secret")))))) as $secret_items
-            | ($items | map(select((any(.tags[]?; (ascii_downcase | contains("secret")))) | not))) as $visible
-            | if ($visible | length) == 0 and ($secret_items | length) == 0 then "No findings reported."
+            | if ($items | length) == 0 then "No findings reported."
               else
                 (
-                  $visible[] |
-                  (.tags | map(ascii_downcase)) as $tags |
-                  (.result.ruleId // "") as $rule |
-                  (if any($tags[]; contains("vulnerability")) or ($rule | startswith("CVE-") or startswith("GHSA-")) then "Vulnerability"
-                   elif any($tags[]; contains("misconfig")) then "Misconfiguration"
-                   elif any($tags[]; contains("license")) then "License"
+                  $items[] |
+                  (.rule.name // "UnknownIssue") as $rule_name |
+                  (.rule.properties.tags // []) as $tags |
+                  (.result.ruleId // "unknown") as $rule_id |
+                  ([ $tags[]? | ascii_upcase | select(. == "CRITICAL" or . == "HIGH" or . == "MEDIUM" or . == "LOW" or . == "UNKNOWN") ] | .[0] // .result.level // "unknown") as $severity |
+                  ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
+                  (if $rule_name == "Secret" then "Secret"
+                   elif $rule_name == "Misconfiguration" then "Misconfiguration"
+                   elif $rule_name == "License" then "License"
+                   elif ($rule_name | contains("Vulnerability")) or ($rule_id | startswith("CVE-") or startswith("GHSA-")) then "Vulnerability"
                    else "Finding" end) as $kind |
-                  (.result.properties.severity // .result.level // "unknown") as $severity |
-                  (.result.message.text // "No detail") as $details |
-                  ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
-                  "\($kind) [\($severity)] \($rule) at \($where): \($details | @json)"
-                ),
-                (
-                  $secret_items[] |
-                  (.result.properties.severity // .result.level // "unknown") as $severity |
-                  (.result.ruleId // "unknown") as $rule |
-                  ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
-                  "Secret [\($severity)] \($rule) at \($where): match redacted"
+                  if $kind == "Secret" then
+                    "Secret [\($severity)] \($rule_id) at \($where): match redacted"
+                  else
+                    (.result.message.text // "No detail") as $details |
+                    "\($kind) [\($severity)] \($rule_id) at \($where): \($details | @json)"
+                  end
                 )
               end
           ' "$SARIF_FILE"
