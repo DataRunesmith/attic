@@ -378,6 +378,9 @@ site-docs/
 .wrangler/
 dist/
 
+# Local development secrets and Cloudflare deployment configuration
+.dev.vars
+.dev.vars.*
 # Local Cloudflare deployment configuration and generated build
 .cloudflare.env
 .cloudflare.env.*
