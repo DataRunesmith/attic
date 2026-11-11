@@ -36,7 +36,7 @@ export function validateBuildValues(values) {
     throw new Error("GALLERY_BUCKET and LEGACY_BUCKET must be different.");
   if (values.CF_ACCESS_AUD !== undefined &&
       (typeof values.CF_ACCESS_AUD !== "string" || values.CF_ACCESS_AUD.length > 256 ||
-       /[\\u0000-\\u001f\\u007f]/.test(values.CF_ACCESS_AUD) ||
+       /[\u0000-\u001f\u007f]/.test(values.CF_ACCESS_AUD) ||
        /^__.*__$/.test(values.CF_ACCESS_AUD)))
     throw new Error("CF_ACCESS_AUD must be a plain audience value of at most 256 characters.");
   if (!isValidAccountId(values.SECRETS_STORE_ID))
