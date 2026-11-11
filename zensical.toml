@@ -1,0 +1,34 @@
+# The documentation site. tools/docs-site.mjs assembles site-docs/ from
+# README.md, docker/README.md and docs/, taking repo_url and the page titles
+# from this file; `zensical build` then writes the site to site/. No site_url
+# is set, so the build does not depend on the address it is served from.
+[project]
+site_name = "Attic"
+site_description = "A private image archive for app icons and theme images."
+repo_url = "https://github.com/DataRunesmith/attic"
+docs_dir = "site-docs"
+nav = [
+  { "Home" = "index.md" },
+]
+
+[project.theme]
+language = "en"
+font = false
+features = [
+  "content.code.copy",
+  "navigation.footer",
+  "navigation.top",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
