@@ -122,14 +122,7 @@ jobs:
               .runs[] as $run
               | $run.results[]?
               | . as $result
-              | {
-                  result: $result,
-                  rule: (
-                    ($run.tool.driver.rules // [])
-                    | map(select(.id == $result.ruleId))
-                    | .[0] // {}
-                  )
-                }
+              | {result: $result}
             ] as $items
             | if ($items | length) == 0 then "No findings reported."
               else
@@ -142,12 +135,13 @@ jobs:
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   (if ($message | contains("\nSecret ")) or ($message | contains("\nMatch: ")) then "Secret"
                    elif ($message | contains("\nLicense ")) then "License"
-                   elif (($message | contains("\nType: ")) and ($message | contains("\nMessage: "))) or ((.rule.name // "") == "Misconfiguration") then "Misconfiguration"
-                   elif ($message | contains("\nVulnerability ")) or ((.rule.name // "") | contains("Vulnerability")) or ($rule_id | startswith("CVE-") or startswith("GHSA-")) then "Vulnerability"
-                   elif (.rule.name // "") == "License" then "License"
+                   elif (($message | contains("\nType: ")) and ($message | contains("\nMessage: "))) then "Misconfiguration"
+                   elif ($message | contains("\nVulnerability ")) then "Vulnerability"
                    else "Finding" end) as $kind |
                   if $kind == "Secret" then
                     "Secret [\($severity)] \($rule_id) at \($where): match redacted"
+                  elif $kind == "Finding" then
+                    "Finding [\($severity)] \($rule_id) at \($where)"
                   else
                     "\($kind) [\($severity)] \($rule_id) at \($where): \($message | @json)"
                   end
@@ -228,14 +222,7 @@ jobs:
               .runs[] as $run
               | $run.results[]?
               | . as $result
-              | {
-                  result: $result,
-                  rule: (
-                    ($run.tool.driver.rules // [])
-                    | map(select(.id == $result.ruleId))
-                    | .[0] // {}
-                  )
-                }
+              | {result: $result}
             ] as $items
             | if ($items | length) == 0 then "No findings reported."
               else
@@ -248,12 +235,13 @@ jobs:
                   ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
                   (if ($message | contains("\nSecret ")) or ($message | contains("\nMatch: ")) then "Secret"
                    elif ($message | contains("\nLicense ")) then "License"
-                   elif (($message | contains("\nType: ")) and ($message | contains("\nMessage: "))) or ((.rule.name // "") == "Misconfiguration") then "Misconfiguration"
-                   elif ($message | contains("\nVulnerability ")) or ((.rule.name // "") | contains("Vulnerability")) or ($rule_id | startswith("CVE-") or startswith("GHSA-")) then "Vulnerability"
-                   elif (.rule.name // "") == "License" then "License"
+                   elif (($message | contains("\nType: ")) and ($message | contains("\nMessage: "))) then "Misconfiguration"
+                   elif ($message | contains("\nVulnerability ")) then "Vulnerability"
                    else "Finding" end) as $kind |
                   if $kind == "Secret" then
                     "Secret [\($severity)] \($rule_id) at \($where): match redacted"
+                  elif $kind == "Finding" then
+                    "Finding [\($severity)] \($rule_id) at \($where)"
                   else
                     "\($kind) [\($severity)] \($rule_id) at \($where): \($message | @json)"
                   end
