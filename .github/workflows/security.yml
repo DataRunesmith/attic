@@ -109,13 +109,38 @@ jobs:
           SARIF_FILE: trivy.sarif
         run: |
           jq -r '
-            [.runs[].results[]? | select((.ruleId // "") | startswith("CVE-"))] |
-            if length == 0 then "No vulnerability findings reported."
-            else .[] |
-              (.properties.severity // .level // "unknown") as $severity |
-              (.message.text // "No vulnerability details supplied") as $details |
-              "\($severity): \(.ruleId // "unknown") \($details | @json)"
-            end
+            [
+              .runs[] as $run
+              | $run.results[]?
+              | . as $result
+              | {
+                  result: $result,
+                  tags: (
+                    ($run.tool.driver.rules // [])
+                    | map(select(.id == $result.ruleId))
+                    | .[0].properties.tags // []
+                  )
+                }
+            ] as $items
+            | ($items | map(select(any(.tags[]?; (ascii_downcase | contains("secret"))))) | length) as $secret_count
+            | ($items | map(select((any(.tags[]?; (ascii_downcase | contains("secret")))) | not))) as $visible
+            | if ($visible | length) == 0 and $secret_count == 0 then "No findings reported."
+              else
+                (
+                  $visible[] |
+                  (.tags | map(ascii_downcase)) as $tags |
+                  (.result.ruleId // "") as $rule |
+                  (if any($tags[]; contains("vulnerability")) or ($rule | startswith("CVE-") or startswith("GHSA-")) then "Vulnerability"
+                   elif any($tags[]; contains("misconfig")) then "Misconfiguration"
+                   elif any($tags[]; contains("license")) then "License"
+                   else "Finding" end) as $kind |
+                  (.result.properties.severity // .result.level // "unknown") as $severity |
+                  (.result.message.text // "No detail") as $details |
+                  ([.result.locations[]?.physicalLocation? | select(.artifactLocation.uri != null) | "\(.artifactLocation.uri):\(.region.startLine // 1)"] | join(", ") | @json) as $where |
+                  "\($kind) [\($severity)] \($rule) at \($where): \($details | @json)"
+                ),
+                (if $secret_count > 0 then "Secret findings withheld from logs: \($secret_count)" else empty end)
+              end
           ' "$SARIF_FILE"
   publish-sarif:
     name: Publish SARIF results
