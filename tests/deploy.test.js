@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 const root = join(import.meta.dirname, "..");
@@ -89,11 +89,14 @@ test("refuses a values file that does not exist", () => {
   assert.match(run.stderr, /No such values file/);
 });
 
-test("hands the Cloudflare account in a values file to wrangler", (t) => {
+test("hands the Cloudflare account in a values file, or in a file it names, to wrangler", (t) => {
   const file = valuesFile(t, `CLOUDFLARE_ACCOUNT_ID=${"1".repeat(32)}`);
   assert.equal(deploy([file, "--dry-run"]).account, "1".repeat(32));
   const preset = deploy([file, "--dry-run"], { CLOUDFLARE_ACCOUNT_ID: "2".repeat(32) });
   assert.equal(preset.account, "2".repeat(32));
+  const named = valuesFile(t, "CLOUDFLARE_ACCOUNT_ID=@account.txt");
+  writeFileSync(join(dirname(named), "account.txt"), `${"3".repeat(32)}\n`);
+  assert.equal(deploy([named, "--dry-run"]).account, "3".repeat(32));
 });
 
 test("refuses to upload without the Cloudflare Access values", (t) => {

@@ -39,7 +39,13 @@ value_of() {
   if [ "$values" = - ]; then
     printenv "$1" || true
   else
-    sed -n "s/^$1=//p" "$values" | tail -n 1
+    raw=$(sed -n "s/^$1=//p" "$values" | tail -n 1)
+    # As in tools/render.mjs, @path stands for the contents of that file.
+    case "$raw" in
+      @/*) cat "${raw#@}" ;;
+      @*) cat "$(dirname "$values")/${raw#@}" ;;
+      *) printf '%s\n' "$raw" ;;
+    esac
   fi
 }
 
