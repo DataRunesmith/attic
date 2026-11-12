@@ -42,8 +42,8 @@ value_of() {
     raw=$(sed -n "s/^$1=//p" "$values" | tail -n 1)
     # As in tools/render.mjs, @path stands for the contents of that file.
     case "$raw" in
-      @/*) cat "${raw#@}" ;;
-      @*) cat "$(dirname "$values")/${raw#@}" ;;
+      @/*) tr -d '\r' <"${raw#@}" ;;
+      @*) tr -d '\r' <"$(dirname "$values")/${raw#@}" ;;
       *) printf '%s\n' "$raw" ;;
     esac
   fi

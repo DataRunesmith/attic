@@ -95,7 +95,7 @@ test("hands the Cloudflare account in a values file, or in a file it names, to w
   const preset = deploy([file, "--dry-run"], { CLOUDFLARE_ACCOUNT_ID: "2".repeat(32) });
   assert.equal(preset.account, "2".repeat(32));
   const named = valuesFile(t, "CLOUDFLARE_ACCOUNT_ID=@account.txt");
-  writeFileSync(join(dirname(named), "account.txt"), `${"3".repeat(32)}\n`);
+  writeFileSync(join(dirname(named), "account.txt"), `${"3".repeat(32)}\r\n`);
   assert.equal(deploy([named, "--dry-run"]).account, "3".repeat(32));
 });
 
