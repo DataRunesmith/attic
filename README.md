@@ -25,6 +25,8 @@ ADMIN_PASSWORD='choose-a-long-password' docker compose up -d
 
 Open <http://localhost:8787> and sign in with the password. Images are kept in the `data` volume. To serve it under another address, set `PUBLIC_URL` as well, for example `PUBLIC_URL=https://images.example.com`. Instead of typing the values on the command line you can put them in a file named `.env` next to `compose.yaml`; git ignores it.
 
+The port is published on this machine only. To reach the app from other machines, put a reverse proxy with HTTPS in front of it; `BIND_ADDRESS=0.0.0.0` publishes the port on every network interface without encryption, so use that on a trusted network only.
+
 ### Your values on Cloudflare
 
 The three Cloudflare ways use the same values. They are listed in `cloudflare.example.env`:
@@ -36,9 +38,9 @@ The three Cloudflare ways use the same values. They are listed in `cloudflare.ex
 | `GALLERY_BUCKET` | Name of the R2 bucket for the archive. |
 | `LEGACY_BUCKET` | Name of an R2 bucket with older images to copy from. It may be an empty bucket. |
 | `CF_ACCESS_TEAM_DOMAIN` | Your Cloudflare Access team domain, for example `your-team.cloudflareaccess.com`. |
-| `CF_ACCESS_AUD` | The Application Audience (AUD) tag of the Access application that protects `PUBLIC_HOST`. Nobody can sign in without it. |
+| `CF_ACCESS_AUD` | The Application Audience (AUD) tag of the Access application that protects `PUBLIC_HOST`. Nobody can sign in without it, so `tools/deploy.sh` refuses to deploy while it is empty. |
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID. |
-| `SECRETS_STORE_ID` | Optional. ID of a Secrets Store that holds a secret named `WORKERS_API_TOKEN` (an API token with Access: Apps: Edit). Only the "Använd i App Launcher" button needs it. |
+| `SECRETS_STORE_ID` | Optional; leave it empty (`SECRETS_STORE_ID=`) if you have none, and the binding is left out. ID of a Secrets Store that holds a secret named `WORKERS_API_TOKEN` (an API token with Access: Apps: Edit). Only the "Använd i App Launcher" button needs it. |
 
 Do this once in the Cloudflare dashboard, before the first deploy:
 
@@ -62,7 +64,7 @@ npx wrangler login
 sh tools/deploy.sh .cloudflare.env
 ```
 
-Run the last command again whenever you want to deploy a newer version. `tools/deploy.sh` fills the values into a temporary copy, deploys it and removes it. Extra arguments go to `wrangler deploy`; `sh tools/deploy.sh .cloudflare.env --dry-run` builds without uploading.
+Run the last command again whenever you want to deploy a newer version. `tools/deploy.sh` fills the values into a temporary copy, deploys it and removes it. Extra arguments go to `wrangler deploy`; `sh tools/deploy.sh .cloudflare.env --dry-run` builds without uploading. If `.cloudflare.env` also has the lines `CLOUDFLARE_API_TOKEN=...` and `CLOUDFLARE_ACCOUNT_ID=...`, they are used and `wrangler login` is not needed.
 
 ### GitHub Actions
 

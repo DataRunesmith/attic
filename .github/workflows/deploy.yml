@@ -33,17 +33,6 @@ jobs:
     needs: configured
     if: needs.configured.outputs.ready == 'true'
     runs-on: ubuntu-latest
-    # Every name in cloudflare.example.env, read from the repository secrets.
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      PUBLIC_HOST: ${{ secrets.PUBLIC_HOST }}
-      PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
-      GALLERY_BUCKET: ${{ secrets.GALLERY_BUCKET }}
-      LEGACY_BUCKET: ${{ secrets.LEGACY_BUCKET }}
-      SECRETS_STORE_ID: ${{ secrets.SECRETS_STORE_ID }}
-      CF_ACCESS_TEAM_DOMAIN: ${{ secrets.CF_ACCESS_TEAM_DOMAIN }}
-      CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -53,3 +42,14 @@ jobs:
           node-version: 24
       - run: npm test
       - run: sh tools/deploy.sh
+        # Every name in cloudflare.example.env, read from the repository secrets.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PUBLIC_HOST: ${{ secrets.PUBLIC_HOST }}
+          PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
+          GALLERY_BUCKET: ${{ secrets.GALLERY_BUCKET }}
+          LEGACY_BUCKET: ${{ secrets.LEGACY_BUCKET }}
+          SECRETS_STORE_ID: ${{ secrets.SECRETS_STORE_ID }}
+          CF_ACCESS_TEAM_DOMAIN: ${{ secrets.CF_ACCESS_TEAM_DOMAIN }}
+          CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}

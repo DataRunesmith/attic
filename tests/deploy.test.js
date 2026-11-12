@@ -20,11 +20,11 @@ function deploy(args, env = {}) {
   writeFileSync(join(dir, "npm"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   writeFileSync(
     join(dir, "npx"),
-    '#!/bin/sh\n{ pwd; echo "$*"; } >"$DEPLOY_LOG"\ncp wrangler.jsonc "$DEPLOY_LOG.jsonc"\n',
+    '#!/bin/sh\n{ pwd; echo "$*"; } >"$DEPLOY_LOG"\ncp wrangler.jsonc "$DEPLOY_LOG.jsonc"\necho "${CLOUDFLARE_ACCOUNT_ID:-}" >"$DEPLOY_LOG.account"\n',
     { mode: 0o755 },
   );
   const clean = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !declared.includes(name)),
+    Object.entries(process.env).filter(([name]) => !declared.includes(name) && !name.startsWith("CLOUDFLARE_")),
   );
   const result = spawnSync("sh", [join(root, "tools/deploy.sh"), ...args], {
     cwd: root,
@@ -34,8 +34,19 @@ function deploy(args, env = {}) {
   const called = existsSync(log);
   const [cwd, command] = called ? readFileSync(log, "utf8").trimEnd().split("\n") : [];
   const config = called ? readFileSync(`${log}.jsonc`, "utf8") : "";
+  const account = called ? readFileSync(`${log}.account`, "utf8").trim() : "";
   rmSync(dir, { recursive: true, force: true });
-  return { status: result.status, stderr: result.stderr, called, cwd, command, config };
+  return { status: result.status, stderr: result.stderr, called, cwd, command, config, account };
+}
+
+// A values file of your own: the example values followed by extra lines.
+function valuesFile(t, ...extra) {
+  const dir = mkdtempSync(join(tmpdir(), "deploy-values-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = join(dir, "values.env");
+  const example = readFileSync(join(root, "cloudflare.example.env"), "utf8");
+  writeFileSync(file, [example, ...extra, ""].join("\n"));
+  return file;
 }
 
 test("deploys a filled-in temporary copy from a values file and removes it", () => {
@@ -78,6 +89,22 @@ test("refuses a values file that does not exist", () => {
   assert.match(run.stderr, /No such values file/);
 });
 
+test("hands the Cloudflare account in a values file to wrangler", (t) => {
+  const file = valuesFile(t, `CLOUDFLARE_ACCOUNT_ID=${"1".repeat(32)}`);
+  assert.equal(deploy([file, "--dry-run"]).account, "1".repeat(32));
+  const preset = deploy([file, "--dry-run"], { CLOUDFLARE_ACCOUNT_ID: "2".repeat(32) });
+  assert.equal(preset.account, "2".repeat(32));
+});
+
+test("refuses to upload without the Cloudflare Access values", (t) => {
+  const run = deploy(["cloudflare.example.env"]);
+  assert.equal(run.status, 1);
+  assert.equal(run.called, false);
+  assert.match(run.stderr, /CF_ACCESS_AUD is empty/);
+  const filled = deploy([valuesFile(t, `CF_ACCESS_AUD=${"a".repeat(64)}`)]);
+  assert.equal(filled.status, 0, filled.stderr);
+});
+
 test("the Deploy workflow passes every declared value and the Cloudflare token", () => {
   const workflow = readFileSync(join(root, ".github/workflows/deploy.yml"), "utf8");
   for (const name of [...declared, "CLOUDFLARE_API_TOKEN"])
@@ -86,4 +113,6 @@ test("the Deploy workflow passes every declared value and the Cloudflare token",
       `${name} is missing from the deploy job's env`,
     );
   assert.match(workflow, /run: sh tools\/deploy\.sh\n/);
+  // Only the deploy step sees the values, not the install and test steps.
+  assert.doesNotMatch(workflow, /^    env:/m);
 });
