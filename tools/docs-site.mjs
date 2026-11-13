@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // Assembles the documentation from README.md, docker/README.md and docs/:
 //
-//   node tools/docs-site.mjs && zensical build    # the site, in site-docs/
+//   node tools/docs-site.mjs && zensical build    # the site, in site/
 //   node tools/docs-site.mjs --wiki <dir>         # the GitHub wiki, in <dir>
 //   node tools/docs-site.mjs --csp-hashes <dir>   # CSP hashes of the built site
+//
+// Before generating docs locally, replace __GITHUB_OWNER__ in zensical.toml
+// with the GitHub repository owner. The Pages workflow does this automatically.
 //
 // README.md becomes the start page and docker/README.md the Docker page; docs/
 // is included as it is, except docs/agents/, which is written for coding agents.
