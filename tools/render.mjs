@@ -40,6 +40,7 @@ if (!valuesFile || !outArg) {
 
 const source = realpathSync(resolve(dirname(fileURLToPath(import.meta.url)), ".."));
 const allowedOutRoot = realpathSync(process.cwd());
+const allowedPrefix = allowedOutRoot + sep;
 
 function isWithin(parent, candidate) {
   const rel = relative(parent, candidate);
@@ -59,8 +60,8 @@ validateCliPath(outArg, "out-dir");
 if (overlayArg !== undefined) validateCliPath(overlayArg, "overlay-dir");
 
 const requestedOut = resolve(allowedOutRoot, outArg);
-if (requestedOut !== allowedOutRoot && !requestedOut.startsWith(allowedOutRoot + sep))
-  throw new Error("Output path must stay within the current working directory.");
+if (!requestedOut.startsWith(allowedPrefix))
+  throw new Error("Output path must be a directory inside the current working directory.");
 mkdirSync(dirname(requestedOut), { recursive: true });
 const canonicalParent = realpathSync(dirname(requestedOut));
 const out = resolve(canonicalParent, basename(requestedOut));
@@ -100,7 +101,7 @@ if (isWithin(source, out)) {
 let overlay = null;
 if (overlayArg !== undefined) {
   const requestedOverlay = resolve(allowedOutRoot, overlayArg);
-  if (requestedOverlay !== allowedOutRoot && !requestedOverlay.startsWith(allowedOutRoot + sep))
+  if (!requestedOverlay.startsWith(allowedPrefix))
     throw new Error("Overlay path must stay within the current working directory.");
   const overlayInfo = lstatSync(requestedOverlay);
   if (overlayInfo.isSymbolicLink() || !overlayInfo.isDirectory())
