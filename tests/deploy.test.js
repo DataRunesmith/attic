@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { test } from "node:test";
 
 const root = join(import.meta.dirname, "..");
@@ -55,7 +55,7 @@ test("deploys a filled-in temporary copy from a values file and removes it", () 
   assert.equal(run.command, "wrangler deploy --dry-run");
   assert.match(run.config, /"pattern": "images\.example\.com"/);
   assert.doesNotMatch(run.config, /__[A-Z][A-Z0-9_]*__/);
-  assert.ok(!run.cwd.startsWith(root), "the copy must live outside the repo");
+  assert.ok(run.cwd.startsWith(join(root, "build") + sep), "the copy must live in the ignored build directory");
   assert.ok(!existsSync(run.cwd), "the copy must be removed afterwards");
 });
 

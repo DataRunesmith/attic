@@ -72,7 +72,10 @@ if [ -z "$dry_run" ]; then
 fi
 
 [ -d node_modules/wrangler ] || npm install --no-package-lock --no-audit --no-fund
-out=$(mktemp -d)
+# render.mjs only writes below the current directory, and inside the repo only
+# to the ignored build/ directory.
+mkdir -p build
+out=$(mktemp -d "$PWD/build/deploy.XXXXXX")
 trap 'rm -rf "$out"' EXIT
 node tools/render.mjs "$values" "$out/app" >/dev/null
 cd "$out/app"

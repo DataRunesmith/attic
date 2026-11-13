@@ -26,6 +26,42 @@ function json(data, status = 200) {
   });
 }
 
+async function bodyExceedsLimit(request, maxBytes) {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    if (!/^\d+$/.test(contentLength)) return true;
+    const length = Number(contentLength);
+    if (!Number.isSafeInteger(length) || length > maxBytes) return true;
+  }
+  const body = request.clone().body;
+  if (!body) return false;
+  const reader = body.getReader();
+  let total = 0;
+  try {
+    while (true) {
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch {
+        // A failing request stream is rejected like an oversized body.
+        return true;
+      }
+      const { done, value } = chunk;
+      if (done) return false;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await Promise.allSettled([
+          reader.cancel(),
+          request.body?.cancel() ?? Promise.resolve(),
+        ]);
+        return true;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function slug(value) {
   return String(value || "")
     .normalize("NFKD")
@@ -48,7 +84,7 @@ function utf8Decode(data) {
 // Password mode: a signed cookie "<expiry>.<hmac>" keyed by ADMIN_PASSWORD, so
 // changing the password logs every session out.
 const SESSION_COOKIE = "attic_session";
-const SESSION_SECONDS = 30 * 24 * 3600;
+const SESSION_SECONDS = 12 * 3600;
 async function sessionMac(password, value) {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -72,7 +108,15 @@ function cookieValue(request, name) {
 async function passwordAuthorized(request, env) {
   const password = String(env.ADMIN_PASSWORD || "");
   const [expiry, mac] = cookieValue(request, SESSION_COOKIE).split(".");
-  if (password.length < 8 || !expiry || !mac || Number(expiry) < Date.now() / 1000) return false;
+  const expirySeconds = Number(expiry);
+  if (
+    password.length < 16 ||
+    !/^\d+$/.test(expiry) ||
+    !mac ||
+    !Number.isSafeInteger(expirySeconds) ||
+    expirySeconds <= Math.floor(Date.now() / 1000) ||
+    expirySeconds > Math.floor(Date.now() / 1000) + SESSION_SECONDS
+  ) return false;
   const expected = await sessionMac(password, expiry);
   return expected.length === mac.length && timingSafeEqual(expected, mac);
 }
@@ -99,13 +143,15 @@ async function passwordAuthRoute(request, env, url) {
   const secure = url.protocol === "https:" ? "; Secure" : "";
   if (url.pathname === "/auth/login" && request.method === "GET") return loginPage();
   if (url.pathname === "/auth/login" && request.method === "POST") {
+    if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
+    if (await bodyExceedsLimit(request, 8192)) return json({ error: "För stor förfrågan." }, 413);
     const form = await request.formData().catch(() => null);
     const given = String(form?.get("password") || "");
     const password = String(env.ADMIN_PASSWORD || "");
-    if (password.length < 8 || !timingSafeEqual(given, password)) {
+    if (password.length < 16 || !timingSafeEqual(given, password)) {
       await new Promise((resolve) => setTimeout(resolve, 800));
       return loginPage(
-        password.length < 8 ? "ADMIN_PASSWORD saknas eller är för kort." : "Fel lösenord.",
+        password.length < 16 ? "ADMIN_PASSWORD saknas eller är för kort (minst 16 tecken)." : "Fel lösenord.",
       );
     }
     const expiry = String(Math.floor(Date.now() / 1000) + SESSION_SECONDS);
@@ -114,6 +160,8 @@ async function passwordAuthRoute(request, env, url) {
   }
   // Same logout link as Access; behind Cloudflare the edge answers it instead.
   if (url.pathname === "/cdn-cgi/access/logout" || url.pathname === "/auth/logout") {
+    if (request.method === "POST" && !sameOriginRequest(request))
+      return json({ error: "Otillåten förfrågan." }, 403);
     const cookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}`;
     return new Response(null, {
       status: 303,
@@ -134,7 +182,7 @@ async function accessAuthorized(request, env) {
   if (!aud || /^__.*__$/.test(aud) || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(team))
     return false;
   const token = request.headers.get("cf-access-jwt-assertion");
-  if (!token) return false;
+  if (!token || token.length > 16_384) return false;
   const parts = token.split(".");
   if (parts.length !== 3) return false;
   try {
@@ -144,21 +192,26 @@ async function accessAuthorized(request, env) {
     if (
       header.alg !== "RS256" ||
       typeof header.kid !== "string" ||
+      header.kid.length === 0 ||
+      header.kid.length > 256 ||
       payload.iss !== `https://${team}` ||
+      typeof payload.exp !== "number" ||
+      !Number.isFinite(payload.exp) ||
       payload.exp <= now ||
-      (payload.nbf !== undefined && payload.nbf > now) ||
+      (payload.nbf !== undefined &&
+        (typeof payload.nbf !== "number" || !Number.isFinite(payload.nbf) || payload.nbf > now)) ||
       !(Array.isArray(payload.aud) ? payload.aud.includes(aud) : payload.aud === aud)
     )
       return false;
     const certUrl = `https://${team}/cdn-cgi/access/certs`;
     if (certCache.url !== certUrl || certCache.expires < Date.now()) {
-      const response = await fetch(certUrl, { headers: { accept: "application/json" } });
+      const response = await fetch(certUrl, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(5_000) });
       if (!response.ok) return false;
       const data = await response.json();
       if (!Array.isArray(data.keys)) return false;
       certCache = { url: certUrl, expires: Date.now() + 15 * 60 * 1000, keys: data.keys };
     }
-    const jwk = certCache.keys.find((k) => k.kid === header.kid && k.kty === "RSA");
+    const jwk = certCache.keys.find((k) => k.kid === header.kid && k.kty === "RSA" && (k.alg === undefined || k.alg === "RS256") && (k.use === undefined || k.use === "sig"));
     if (!jwk) return false;
     const publicKey = await crypto.subtle.importKey(
       "jwk",
@@ -416,7 +469,7 @@ async function r2Api(request, env, url) {
   let data = {};
   if (isImport || isDelete) {
     try {
-      if (Number(request.headers.get("content-length") || 0) > 4096)
+      if (await bodyExceedsLimit(request, 4096))
         return json({ error: "För stor begäran." }, 413);
       data = await request.json();
     } catch {
@@ -686,7 +739,7 @@ function themeRequest(app, url) {
 async function themeHandler(request, env, url) {
   if (request.method !== "POST") return json({ error: "Metoden stöds inte." }, 405);
   if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
-  if (Number(request.headers.get("content-length") || 0) > 100000)
+  if (await bodyExceedsLimit(request, 100_000))
     return json({ error: "För stor förfrågan." }, 413);
   let d;
   try {
@@ -762,7 +815,7 @@ async function readMutationJson(request) {
   if (!sameOriginRequest(request)) return { error: json({ error: "Otillåten förfrågan." }, 403) };
   if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json")
     return { error: json({ error: "Kräver JSON." }, 415) };
-  if (Number(request.headers.get("content-length") || 0) > 100_000)
+  if (await bodyExceedsLimit(request, 512 * 1024))
     return { error: json({ error: "För stor begäran." }, 413) };
   try {
     return { data: await request.json() };
@@ -803,13 +856,22 @@ async function themeDelete(request, bucket, prefix) {
   if (data?.confirm !== theme) return json({ error: "Bekräftelse saknas." }, 400);
   try {
     let deleted = 0;
+    let complete = false;
     for (let page = 0; page < 50; page++) {
       const listing = await bucket.list({ prefix: `${prefix}themes/${theme}/`, limit: 1000 });
-      if (!listing.objects.length) break;
+      if (!listing.objects.length) {
+        complete = true;
+        break;
+      }
       await bucket.delete(listing.objects.map((o) => o.key));
       deleted += listing.objects.length;
-      if (!listing.truncated) break;
+      if (!listing.truncated) {
+        complete = true;
+        break;
+      }
     }
+    if (!complete)
+      return json({ error: "Temat innehåller fler objekt än raderingsgränsen; kör igen för att fortsätta.", deleted }, 503);
     return json({ deleted, theme });
   } catch {
     return json({ error: "Temat kunde inte raderas." }, 503);
@@ -849,7 +911,7 @@ async function handleApi(request, env, url) {
     if (!sameOriginRequest(request)) return json({ error: "Otillåten förfrågan." }, 403);
     if (!/multipart\/form-data/i.test(request.headers.get("content-type") || ""))
       return json({ error: "Felaktigt formulär." }, 415);
-    if (Number(request.headers.get("content-length") || 0) > MAX_UPLOAD + 128_000)
+    if (await bodyExceedsLimit(request, MAX_UPLOAD + 128_000))
       return json({ error: "Filen är för stor." }, 413);
     let form;
     try {
@@ -936,7 +998,9 @@ async function servePublicImage(request, env, url) {
   const selectedBucket = key.startsWith("gallery/") ? env.GALLERY_BUCKET : env.LEGACY_BUCKET;
   if (!selectedBucket) return new Response("Bildlagringen är inte tillgänglig.", { status: 503 });
   try {
-    const object = await selectedBucket.get(key);
+    const object = request.method === "HEAD"
+      ? await selectedBucket.head(key)
+      : await selectedBucket.get(key);
     if (!object)
       return new Response("Bilden finns inte.", {
         status: 404,
