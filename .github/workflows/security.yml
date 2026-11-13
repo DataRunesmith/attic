@@ -30,9 +30,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.13"
+          python-version: "3.15"
       - name: Remove stale Semgrep report
         run: rm -f semgrep.sarif
       - name: Run Semgrep
@@ -90,7 +90,7 @@ jobs:
           scan-ref: .
           format: sarif
           output: trivy.sarif
-          version: v0.70.0
+          version: v0.76.2
           scanners: vuln,misconfig,secret,license
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           exit-code: "0"
@@ -177,7 +177,7 @@ jobs:
       - name: Upload Semgrep results
         id: upload_semgrep
         if: ${{ !cancelled() && steps.checkout_source.outcome == 'success' && needs.semgrep.result == 'success' }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/sarif-artifacts/semgrep.sarif
           checkout_path: ${{ github.workspace }}
@@ -203,7 +203,7 @@ jobs:
       - name: Upload Trivy results
         id: upload_trivy
         if: ${{ !cancelled() && steps.checkout_source.outcome == 'success' && needs.trivy.result == 'success' }}
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: ${{ runner.temp }}/sarif-artifacts/trivy.sarif
           checkout_path: ${{ github.workspace }}
