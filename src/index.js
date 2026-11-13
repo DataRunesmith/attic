@@ -39,7 +39,14 @@ async function bodyExceedsLimit(request, maxBytes) {
   let total = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let chunk;
+      try {
+        chunk = await reader.read();
+      } catch {
+        // A failing request stream is rejected like an oversized body.
+        return true;
+      }
+      const { done, value } = chunk;
       if (done) return false;
       total += value.byteLength;
       if (total > maxBytes) {

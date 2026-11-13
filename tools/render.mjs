@@ -56,10 +56,10 @@ function validateCliPath(value, name) {
 }
 
 validateCliPath(outArg, "out-dir");
-if (overlayArg) validateCliPath(overlayArg, "overlay-dir");
+if (overlayArg !== undefined) validateCliPath(overlayArg, "overlay-dir");
 
 const requestedOut = resolve(allowedOutRoot, outArg);
-if (!isWithin(allowedOutRoot, requestedOut))
+if (requestedOut !== allowedOutRoot && !requestedOut.startsWith(allowedOutRoot + sep))
   throw new Error("Output path must stay within the current working directory.");
 mkdirSync(dirname(requestedOut), { recursive: true });
 const canonicalParent = realpathSync(dirname(requestedOut));
@@ -80,8 +80,8 @@ if (isWithin(out, source))
 if (isWithin(source, out)) {
   const outputRelative = relative(source, out);
   const outputRoot = outputRelative.split(sep)[0];
-  if (outputRoot !== "dist")
-    throw new Error("An output directory inside the repository must be the dedicated generated directory dist.");
+  if (outputRoot !== "dist" && outputRoot !== "build")
+    throw new Error("An output directory inside the repository must be the dedicated generated directory dist or build.");
   try {
     execFileSync("git", ["check-ignore", "--quiet", "--no-index", "--", outputRelative], {
       cwd: source,
@@ -98,9 +98,9 @@ if (isWithin(source, out)) {
 }
 
 let overlay = null;
-if (overlayArg) {
+if (overlayArg !== undefined) {
   const requestedOverlay = resolve(allowedOutRoot, overlayArg);
-  if (!isWithin(allowedOutRoot, requestedOverlay))
+  if (requestedOverlay !== allowedOutRoot && !requestedOverlay.startsWith(allowedOutRoot + sep))
     throw new Error("Overlay path must stay within the current working directory.");
   const overlayInfo = lstatSync(requestedOverlay);
   if (overlayInfo.isSymbolicLink() || !overlayInfo.isDirectory())
