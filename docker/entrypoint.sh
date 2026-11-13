@@ -12,8 +12,8 @@ PUBLIC_URL=${PUBLIC_URL%/}
 : "${AUTH_MODE:=password}"
 case "$AUTH_MODE" in
   password)
-    [ "${#ADMIN_PASSWORD}" -ge 8 ] 2>/dev/null ||
-      { echo "AUTH_MODE=password needs ADMIN_PASSWORD (at least 8 characters)." >&2; exit 1; } ;;
+    [ "${#ADMIN_PASSWORD}" -ge 16 ] 2>/dev/null ||
+      { echo "AUTH_MODE=password needs ADMIN_PASSWORD (at least 16 characters)." >&2; exit 1; } ;;
   cloudflare-access)
     [ -n "${CF_ACCESS_TEAM_DOMAIN:-}" ] && [ -n "${CF_ACCESS_AUD:-}" ] ||
       { echo "AUTH_MODE=cloudflare-access needs CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD." >&2; exit 1; } ;;
