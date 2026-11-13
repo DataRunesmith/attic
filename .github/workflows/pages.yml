@@ -25,7 +25,7 @@ jobs:
           node-version: 24
       - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.14"
+          python-version: "3.15"
       - run: pip install --no-deps -r requirements-docs.txt
       - name: Set documentation repository owner
         env:
