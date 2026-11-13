@@ -1,0 +1,53 @@
+name: Docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.14"
+      - run: pip install --no-deps -r requirements-docs.txt
+      - name: Set documentation repository owner
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: sed -i "s|__GITHUB_OWNER__|${REPOSITORY%%/*}|g" zensical.toml
+      - run: node tools/docs-site.mjs
+      - run: zensical build --clean --strict
+      - uses: actions/upload-pages-artifact@v5.0.0
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5.0.1

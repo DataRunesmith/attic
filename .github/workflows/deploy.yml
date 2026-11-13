@@ -1,0 +1,55 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  # A copy of the repo without a Cloudflare token has nothing to deploy to.
+  configured:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "ready=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "The secret CLOUDFLARE_API_TOKEN is not set, so nothing is deployed."
+          fi
+
+  deploy:
+    needs: configured
+    if: needs.configured.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24
+      - run: npm test
+      - run: sh tools/deploy.sh
+        # Every name in cloudflare.example.env, read from the repository secrets.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PUBLIC_HOST: ${{ secrets.PUBLIC_HOST }}
+          PUBLIC_ORIGIN: ${{ secrets.PUBLIC_ORIGIN }}
+          GALLERY_BUCKET: ${{ secrets.GALLERY_BUCKET }}
+          LEGACY_BUCKET: ${{ secrets.LEGACY_BUCKET }}
+          SECRETS_STORE_ID: ${{ secrets.SECRETS_STORE_ID }}
+          CF_ACCESS_TEAM_DOMAIN: ${{ secrets.CF_ACCESS_TEAM_DOMAIN }}
+          CF_ACCESS_AUD: ${{ secrets.CF_ACCESS_AUD }}

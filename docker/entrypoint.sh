@@ -34,7 +34,8 @@ sed -n 's/^\([A-Z][A-Z0-9_]*\)=.*/\1/p' "$app/cloudflare.example.env" | while re
 done >"$values"
 
 site=/srv/site
-node /opt/app/tools/render.mjs "$values" "$site" >/dev/null
+# render.mjs writes only below the current directory.
+(cd /srv && node /opt/app/tools/render.mjs "$values" site >/dev/null)
 cp "$app/docker/wrangler.jsonc" "$site/wrangler.jsonc"
 
 vars=$(mktemp)

@@ -9,8 +9,9 @@ import { readFileSync } from "node:fs";
 
 const ADDRESS = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g;
 const RESERVED = /(?:^|\.)(?:example\.(?:com|net|org)|example|test|invalid|localhost)$/i;
-// Package scopes and versions look like addresses but are not.
-const NOT_AN_ADDRESS = /^(?:\d+(?:\.\d+)*|[a-z]+\.(?:js|ts|mjs|json))$/i;
+// Package scopes, versions and release tags (action@v1.2.3) look like addresses
+// but are not.
+const NOT_AN_ADDRESS = /^(?:v?\d+(?:\.\d+)*|[a-z]+\.(?:js|ts|mjs|json))$/i;
 
 const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
   .split("\0")
