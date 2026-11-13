@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24
+          node-version: 26
       - run: npm test
       - run: sh tools/deploy.sh
         # Every name in cloudflare.example.env, read from the repository secrets.
