@@ -514,6 +514,9 @@ test("Theme API rejects a JSON body that is not an object", async () => {
   const e = env();
   for (const body of [null, [], "x", 5]) {
     assert.equal((await jpost("/api/theme/preview", body, e)).status, 400);
+    for (const path of ["/api/r2/import", "/api/r2/delete", "/api/gallery/delete", "/api/themes/delete"]) {
+      assert.equal((await jpost(path, body, e)).status, 400, path);
+    }
   }
 });
 
