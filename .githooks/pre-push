@@ -1,7 +1,13 @@
 #!/bin/sh
 # Blocks a push unless the tests and syntax checks pass.
 # Enable once per clone with: npm run hooks
+# The checks run on the working tree, so it must match the commits. Only the
+# checked-out branch is covered; pushing another branch is not checked here.
 set -eu
 cd "$(git rev-parse --show-toplevel)"
+if [ -n "$(git status --porcelain)" ]; then
+  echo "pre-push: commit or stash all changes so the checks test the pushed commits." >&2
+  exit 1
+fi
 npm test
 npm run check
