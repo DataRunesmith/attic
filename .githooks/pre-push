@@ -15,7 +15,11 @@ zero=0000000000000000000000000000000000000000
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ -n "$local_ref" ] || continue
   case "$local_sha" in *[!0]*) ;; *) continue ;; esac
-  if [ "$local_sha" != "$head" ]; then
+  if ! commit=$(git rev-parse --verify --quiet "${local_sha}^{commit}"); then
+    echo "pre-push: $local_ref does not point at a commit, so the checks cannot vouch for it." >&2
+    exit 1
+  fi
+  if [ "$commit" != "$head" ]; then
     echo "pre-push: $local_ref is not the checked-out commit, so the checks cannot vouch for it. Check it out and push again." >&2
     exit 1
   fi
