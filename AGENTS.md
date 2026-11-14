@@ -39,3 +39,7 @@ Do not push incomplete, inadequately reviewed, knowingly defective, or questiona
 If a required check cannot be run, or a finding cannot be resolved, do not silently proceed with the push. Investigate alternatives and clearly report the specific blocker, its impact, and the evidence available. A push despite an unresolved blocker requires explicit authorization; never present such a push as fully verified.
 
 **Quality is a prerequisite for pushing, not work to defer until after the push.**
+
+## 3. No PR activity subscriptions
+
+Do not subscribe to GitHub activity on pull requests (for example with `subscribe_pr_activity`), and do not start background monitors or polling loops to watch a PR. Check a PR's state only when asked, or once when it is directly needed to finish the task. If a subscription already exists, unsubscribe from it.
