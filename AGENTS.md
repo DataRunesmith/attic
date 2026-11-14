@@ -22,6 +22,8 @@ Treat a finding as a signal to investigate the quality of the surrounding implem
 
 Never push code to GitHub unless it has been reviewed and verified to meet the highest reasonably achievable quality standard for the project.
 
+Run `npm run hooks` once per clone. It enables `.githooks/pre-push`, which runs `npm test` and `npm run check` and stops the push if either fails. A local hook can be bypassed (`--no-verify`), so it supports the review below and does not replace it; CI is the server-side check.
+
 Before pushing:
 
 - Review the complete diff, including every changed and newly added file.
