@@ -510,6 +510,13 @@ test("Deleting a theme removes only that theme and requires its name as confirma
   ]);
 });
 
+test("Theme API rejects a JSON body that is not an object", async () => {
+  const e = env();
+  for (const body of [null, [], "x", 5]) {
+    assert.equal((await jpost("/api/theme/preview", body, e)).status, 400);
+  }
+});
+
 test("password mode: login page, wrong password, session cookie and logout", async () => {
   const e = {
     AUTH_MODE: "password",
