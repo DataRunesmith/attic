@@ -747,6 +747,7 @@ async function themeHandler(request, env, url) {
   } catch {
     return json({ error: "Ogiltig JSON." }, 400);
   }
+  if (!d || typeof d !== "object" || Array.isArray(d)) return json({ error: "Ogiltig JSON." }, 400);
   const theme = String(d.theme || ""),
     size = String(d.size || "");
   if (
@@ -769,7 +770,7 @@ async function themeHandler(request, env, url) {
       !Array.isArray(d.changes) ||
       d.changes.length !== changes.length ||
       !changes.every((x) =>
-        d.changes.some((y) => y.id === x.id && y.old_url === x.old_url && y.url === x.url),
+        d.changes.some((y) => y?.id === x.id && y.old_url === x.old_url && y.url === x.url),
       )
     )
       return json({ error: "Matchningarna har ändrats. Förhandsgranska igen." }, 409);
