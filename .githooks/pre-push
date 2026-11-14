@@ -1,0 +1,28 @@
+#!/bin/sh
+# Blocks a push unless the tests and syntax checks pass.
+# Enable once per clone with: npm run hooks
+# The checks run on the working tree, so it must be clean and match the commit
+# being pushed. Pushing any other commit (another branch or a tag) is refused,
+# because these checks could not vouch for it. Deleting a ref is allowed.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+if [ -n "$(git status --porcelain)" ]; then
+  echo "pre-push: commit or stash all changes so the checks test the pushed commits." >&2
+  exit 1
+fi
+head=$(git rev-parse HEAD)
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "$local_ref" ] || continue
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+  if ! commit=$(git rev-parse --verify --quiet "${local_sha}^{commit}"); then
+    echo "pre-push: $local_ref does not point at a commit, so the checks cannot vouch for it." >&2
+    exit 1
+  fi
+  if [ "$commit" != "$head" ]; then
+    echo "pre-push: $local_ref is not the checked-out commit, so the checks cannot vouch for it. Check it out and push again." >&2
+    exit 1
+  fi
+done
+npm test
+npm run check
